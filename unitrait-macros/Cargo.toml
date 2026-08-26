@@ -1,0 +1,18 @@
+[package]
+name = "unitrait-macros"
+version = "1.1.0"
+edition = "2024"
+description = "Implementation detail of the `unitrait` crate"
+repository = "https://github.com/embassy-rs/unitrait"
+license = "MIT OR Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+unitrait = { path = "../unitrait" }

@@ -1,13 +1,6 @@
-[package]
-name = "unitrait"
-version = "1.0.0"
-edition = "2024"
-description = "Traits with a single global implementation, resolved at link time"
-repository = "https://github.com/embassy-rs/unitrait"
-readme = "README.md"
-license = "MIT OR Apache-2.0"
-categories = [
-    "embedded",
-    "no-std",
-    "rust-patterns",
+[workspace]
+resolver = "3"
+members = [
+    "unitrait",
+    "unitrait-macros",
 ]
