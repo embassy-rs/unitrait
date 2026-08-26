@@ -1,0 +1,5 @@
+error: `#[opaque]` is only allowed on associated type declarations
+ --> tests/ui/opaque_on_method.rs:5:16
+  |
+5 |         pub fn foo() -> u32;
+  |                ^^^

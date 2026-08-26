@@ -1,0 +1,5 @@
+error: duplicate associated type
+ --> tests/ui/duplicate_assoc_type.rs:9:18
+  |
+9 |         pub type Context;
+  |                  ^^^^^^^

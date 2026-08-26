@@ -14,3 +14,6 @@ categories = [
 
 [dependencies]
 unitrait-macros = { version = "1.1.0", path = "../unitrait-macros" }
+
+[dev-dependencies]
+trybuild = "1.0"

@@ -1,0 +1,5 @@
+error: the opaque type's name is derived automatically as `FooContext` (trait name + associated type name); remove the `= ...`
+ --> tests/ui/type_with_equals.rs:5:26
+  |
+5 |         pub type Context = FooContext;
+  |                          ^

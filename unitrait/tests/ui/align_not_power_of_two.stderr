@@ -1,0 +1,5 @@
+error[E0589]: invalid alignment value: not a power of two
+ --> tests/ui/align_not_power_of_two.rs:3:36
+  |
+3 |         #[opaque(size = 8, align = 3)]
+  |                                    ^

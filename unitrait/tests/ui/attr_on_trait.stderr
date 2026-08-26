@@ -1,0 +1,5 @@
+error: only doc comments are allowed here
+ --> tests/ui/attr_on_trait.rs:2:5
+  |
+2 |     #[derive(Debug)]
+  |     ^

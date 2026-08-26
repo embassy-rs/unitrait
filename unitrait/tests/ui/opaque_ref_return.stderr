@@ -1,0 +1,5 @@
+error: references to opaque associated types are not supported in return position
+ --> tests/ui/opaque_ref_return.rs:8:25
+  |
+8 |         pub fn get() -> &Self::Context;
+  |                         ^

@@ -1,0 +1,5 @@
+error: explicit lifetimes on references to opaque associated types are not supported
+ --> tests/ui/opaque_ref_lifetime.rs:8:27
+  |
+8 |         pub fn peek(ctx: &'static Self::Context) -> u32;
+  |                           ^^^^^^^

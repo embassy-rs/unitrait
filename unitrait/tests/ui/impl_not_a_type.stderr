@@ -1,0 +1,21 @@
+error: no rules expected keyword `struct`
+  --> tests/ui/impl_not_a_type.rs:10:11
+   |
+ 1 | unitrait::unitrait! {
+   | ------------------- when calling this macro
+...
+10 | foo_impl!(struct);
+   |           ^^^^^^ no rules expected this token in macro call
+   |
+note: while trying to match meta-variable `$t:ty`
+  --> tests/ui/impl_not_a_type.rs:1:1
+   |
+ 1 | / unitrait::unitrait! {
+ 2 | |     pub trait Foo {
+ 3 | |         #[symbol = "_ui_impl_not_a_type"]
+ 4 | |         pub fn foo() -> u32;
+...  |
+ 7 | |     macro foo_impl(path = $crate);
+ 8 | | }
+   | |_^
+   = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)

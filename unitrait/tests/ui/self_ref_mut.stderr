@@ -1,0 +1,5 @@
+error: unitrait methods must not have a `self` parameter; store state in `static`s or in an opaque associated type
+ --> tests/ui/self_ref_mut.rs:4:20
+  |
+4 |         pub fn foo(&mut self) -> u32;
+  |                    ^

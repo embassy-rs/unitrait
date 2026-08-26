@@ -1,0 +1,18 @@
+error[E0277]: the trait bound `MyImpl: Foo` is not satisfied
+  --> tests/ui/impl_not_implemented.rs:12:11
+   |
+12 | foo_impl!(MyImpl);
+   |           ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `Foo` is not implemented for `MyImpl`
+  --> tests/ui/impl_not_implemented.rs:10:1
+   |
+10 | struct MyImpl;
+   | ^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+  --> tests/ui/impl_not_implemented.rs:1:1
+   |
+ 1 | / unitrait::unitrait! {
+ 2 | |     pub trait Foo {
+   | |_________________^
+   = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)

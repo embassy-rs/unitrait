@@ -1,0 +1,5 @@
+error: expected `size` or `align`
+ --> tests/ui/opaque_unknown_key.rs:3:39
+  |
+3 |         #[opaque(size = 8, align = 4, frob = 1)]
+  |                                       ^^^^^^^^

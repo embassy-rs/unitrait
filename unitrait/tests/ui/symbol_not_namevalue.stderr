@@ -1,0 +1,5 @@
+error: expected `#[symbol = "..."]`
+ --> tests/ui/symbol_not_namevalue.rs:3:9
+  |
+3 |         #[symbol("_ui_symbol_not_namevalue")]
+  |         ^

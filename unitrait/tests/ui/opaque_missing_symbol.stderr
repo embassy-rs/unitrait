@@ -1,0 +1,5 @@
+error: opaque associated types require a `#[symbol = "..."]` attribute naming the extern symbol for dropping the value in place
+ --> tests/ui/opaque_missing_symbol.rs:4:18
+  |
+4 |         pub type Context;
+  |                  ^^^^^^^

@@ -1,0 +1,5 @@
+error: expected `#[opaque(size = N, align = M)]`
+ --> tests/ui/opaque_missing_align.rs:3:9
+  |
+3 |         #[opaque(size = 8)]
+  |         ^

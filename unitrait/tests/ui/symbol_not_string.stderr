@@ -1,0 +1,5 @@
+error: expected a string literal
+ --> tests/ui/symbol_not_string.rs:3:20
+  |
+3 |         #[symbol = 42]
+  |                    ^^
