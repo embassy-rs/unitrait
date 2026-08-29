@@ -2,11 +2,18 @@
 
 Traits with a single global implementation, resolved at link time.
 
-A "unitrait" is a trait that has exactly one implementation across the whole crate tree. It can be called from anywhere in the tree without carrying generic parameters or instances around, without dyn, and produces link-time errors if there is no implementation or more than one.
+A "unitrait" is a trait that has exactly one implementation across the whole
+crate tree. It can be called from anywhere in the tree without carrying
+generic parameters or instances around, without `dyn`, and produces link-time
+errors if there is no implementation or more than one.
 
-This is achieved by dispatching calls through extern "Rust" functions: the defining crate declares (and calls) functions by symbol name, and the implementing crate exports them. The linker matches them up.
+This is achieved by dispatching calls through `extern "Rust"` functions: the
+defining crate declares (and calls) functions by symbol name, and the
+implementing crate exports them. The linker matches them up.
 
-The use case is allowing pluggalbe "drivers" for foundational, process-wide facilities where generics would be too viral and dyn too costly. For example, it's used for the embassy-time driver and the embassy-executor pender and trace hooks.
+The use case is allowing pluggalbe "drivers" for foundational, process-wide facilities
+where generics would be too viral and `dyn` too costly. For example, it's used for the
+`embassy-time` driver and the `embassy-executor` pender and trace hooks.
 
 ## How it works
 
