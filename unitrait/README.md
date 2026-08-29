@@ -223,3 +223,16 @@ unitrait::unitrait! {
     macro embassy_crypto_sha256_impl(path = $crate);
 }
 ```
+
+
+Callers see `Context` (named after the trait plus the associated type), an
+opaque type with the declared size and alignment; the implementation sets
+`type Context` to its actual state type, and the implementation macro checks at
+compile time that it fits. A trait may declare any number of opaque types, and
+methods may use each as `Self::Name`, `&Self::Name` or `&mut Self::Name` in
+any parameter, and return one by value. Opaque values are only obtainable from
+methods returning one, so they always hold initialized state — the free
+functions are safe, and dropping one drops the implementation's value in
+place, through the opaque type's own extern symbol.
+
+See the documentation of the `unitrait!` macro for the full details.
