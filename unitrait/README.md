@@ -1,19 +1,12 @@
 # unitrait
 
-Link-time polymorphism for Rust traits. Designed for embedded systems where you want
-compile-time trait dispatch without generics or dynamic allocation.
+Traits with a single global implementation, resolved at link time.
 
-## Overview
+A "unitrait" is a trait that has exactly one implementation across the whole crate tree. It can be called from anywhere in the tree without carrying generic parameters or instances around, without dyn, and produces link-time errors if there is no implementation or more than one.
 
-`unitrait` lets you define a trait in one crate, implement it in another, and use it
-from a third — with zero runtime overhead, no generics, and no `dyn` pointers. The
-dispatch happens at **link time** via `extern "Rust"` symbols.
+This is achieved by dispatching calls through extern "Rust" functions: the defining crate declares (and calls) functions by symbol name, and the implementing crate exports them. The linker matches them up.
 
-This is useful when:
-- You have a HAL driver crate that implements crypto/Hash/RNG/etc.
-- You have an application crate that uses those operations.
-- You don't want to thread generic type parameters through every layer.
-- You can't use `dyn Trait` because you're in `no_std` without an allocator.
+The use case is allowing pluggalbe "drivers" for foundational, process-wide facilities where generics would be too viral and dyn too costly. For example, it's used for the embassy-time driver and the embassy-executor pender and trace hooks.
 
 ## How it works
 
@@ -199,16 +192,6 @@ embassy_crypto_driver::embassy_crypto_aes128ecb_impl!(AesDriver);
 - **`unsafe` under the hood** — The generated wrappers use `unsafe` to call `extern "Rust"`
   functions. This is safe in practice because the symbols are guaranteed to exist by the
   linker (if the driver crate is linked), but the compiler cannot verify it.
-- **LTO recommended** — The wrapper functions are thin and inline well, but for absolute
-  zero overhead, enable Link-Time Optimization (`lto = "fat"` in `Cargo.toml`).
-
-## Comparison with alternatives
-
-| Approach | Runtime cost | Compile-time cost | Flexibility |
-|----------|-----------|-------------------|-------------|
-| Generics (`impl Trait`) | Zero | Monomorphization bloat | Must thread type params everywhere |
-| `dyn Trait` | vtable + indirection | None | Requires allocator |
-| **unitrait** | Zero (direct call) | None (link-time) | One impl per binary, no generics |
 
 ## Example: complete unitrait definition
 
@@ -233,15 +216,3 @@ unitrait::unitrait! {
     macro embassy_crypto_sha256_impl(path = $crate);
 }
 ```
-
-## Debugging
-
-If you get "undefined reference to `_emb_crypto_...`" linker errors, it means the driver
-crate that implements the unitrait is not being linked. Make sure:
-
-1. The driver crate is a dependency of your final binary.
-2. The driver crate invokes `impl!(DriverType)` for the trait.
-3. The driver crate's `impl` block uses the exact `#[symbol]` names from the trait definition.
-
-If you get "type mismatch" errors on `Context`, check that the `#[opaque(size, align)]`
-in the trait definition is large enough for the driver's `Context` type.
