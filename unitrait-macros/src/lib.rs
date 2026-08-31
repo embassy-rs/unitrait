@@ -724,11 +724,11 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
         quote! {
             const _: () = {
-                assert!(
+                ::core::assert!(
                     ::core::mem::size_of::<#real>() <= #size,
                     "unitrait: the implementation's associated type is larger than its declared opaque size",
                 );
-                assert!(
+                ::core::assert!(
                     ::core::mem::align_of::<#real>() <= #align,
                     "unitrait: the implementation's associated type requires stricter alignment than its declared opaque alignment",
                 );
