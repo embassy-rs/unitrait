@@ -5,7 +5,8 @@
 
 use proc_macro2::{Punct, Spacing, Span, TokenStream, TokenTree};
 use quote::{ToTokens, format_ident, quote};
-use syn::parse::{Parse, ParseStream};
+use syn::parse::{Parse, ParseStream, Parser};
+use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{
     Attribute, Expr, Ident, Lit, LitInt, LitStr, Token, Type, Visibility, braced, parenthesized,
@@ -127,7 +128,8 @@ use syn::{
 /// # }
 /// ```
 ///
-/// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] #[symbol = "..."] [vis] type Name;`, where `N` and
+/// Each opaque associated type declaration must be of the form
+/// `#[opaque(size = N, align = M)] #[symbol = "..."] [vis] type Name;`, where `N` and
 /// `M` are integer literals. It emits:
 ///
 /// - `type Name;` in the trait. The implementation sets it to a type of its choosing, which
@@ -158,6 +160,33 @@ use syn::{
 /// Nested uses (`Option<Self::Name>`, `&[Self::Name]`, ...) are rejected at compile time:
 /// they cannot be bridged across the extern symbol, since the caller-side and
 /// implementation-side types are not layout-compatible beyond the top level.
+///
+/// # Conditional opaque sizes with `cfg_attr`
+///
+/// Per-driver, architecture-dependent opaque context sizes are supported via
+/// `#[cfg_attr(condition, opaque(size = N, align = M))]`. Multiple `cfg_attr` attributes
+/// may be given; the first one whose condition matches determines the size and alignment
+/// for that build configuration. A bare `#[opaque(size = N, align = M)]` may be used as an
+/// unconditional fallback.
+///
+/// ```ignore
+/// unitrait::unitrait! {
+///     pub trait Md5 {
+///         #[cfg_attr(all(feature = "context-md5", target_pointer_width = "64"), opaque(size = 1024, align = 16))]
+///         #[cfg_attr(all(feature = "context-md5", target_pointer_width = "32"), opaque(size = 512, align = 16))]
+///         #[cfg_attr(all(not(feature = "context-md5"), target_pointer_width = "64"), opaque(size = 128, align = 16))]
+///         #[cfg_attr(all(not(feature = "context-md5"), target_pointer_width = "32"), opaque(size = 64, align = 16))]
+///         #[symbol = "_emb_crypto_md5_context_drop"]
+///         pub type Context;
+///
+///         #[symbol = "_emb_crypto_md5_init"]
+///         pub fn md5_init() -> Self::Context;
+///         // ...
+///     }
+///
+///     macro md5_impl(path = $crate);
+/// }
+/// ```
 ///
 /// # Implementing a unitrait
 ///
@@ -239,20 +268,31 @@ struct UnitraitInput {
     path: TokenStream,
 }
 
+/// One conditional or unconditional size/align pair for an opaque type.
+struct OpaqueVariant {
+    /// `None` for an unconditional `#[opaque(...)]`, otherwise the tokens inside `#[cfg(...)]`.
+    cfg: Option<TokenStream>,
+    size: LitInt,
+    align: LitInt,
+}
+
 struct OpaqueDecl {
     docs: Vec<Attribute>,
+    /// `#[cfg(...)]` and non-opaque `#[cfg_attr(...)]` attributes to pass through.
+    passthrough: Vec<Attribute>,
     vis: Visibility,
     /// The associated type's name, e.g. `Context`.
     assoc: Ident,
     /// The generated opaque struct's name: trait name + associated type name.
     opaque: Ident,
-    size: LitInt,
-    align: LitInt,
     drop_symbol: LitStr,
+    variants: Vec<OpaqueVariant>,
 }
 
 struct Method {
     docs: Vec<Attribute>,
+    /// `#[cfg(...)]` and non-opaque `#[cfg_attr(...)]` attributes to pass through.
+    passthrough: Vec<Attribute>,
     vis: Visibility,
     unsafety: Option<Token![unsafe]>,
     name: Ident,
@@ -261,14 +301,29 @@ struct Method {
     ret: Option<Type>,
 }
 
-type SplitAttrs = (Vec<Attribute>, Option<LitStr>, Option<(LitInt, LitInt)>);
+/// Parsed result of `split_attrs`.
+struct SplitAttrs {
+    docs: Vec<Attribute>,
+    symbol: Option<LitStr>,
+    /// `Some` if any `#[opaque(...)]` or `#[cfg_attr(..., opaque(...))]` was found.
+    opaque: Option<OpaqueInfo>,
+    passthrough: Vec<Attribute>,
+}
 
-/// Splits attributes into doc comments, an optional `#[symbol = "..."]`, and an optional
-/// `#[opaque(size = N, align = M)]`.
+/// Aggregated opaque variants from one attribute list.
+struct OpaqueInfo {
+    variants: Vec<OpaqueVariant>,
+}
+
+/// Splits attributes into doc comments, an optional `#[symbol = "..."]`, an optional
+/// set of opaque variants (from bare `#[opaque]` and/or `#[cfg_attr(..., opaque(...))]`),
+/// and passthrough attributes (`#[cfg(...)]`, non-opaque `#[cfg_attr(...)]`).
 fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
     let mut docs = vec![];
     let mut symbol = None;
-    let mut opaque = None;
+    let mut opaque: Option<OpaqueInfo> = None;
+    let mut passthrough = vec![];
+
     for attr in attrs {
         if attr.path().is_ident("doc") {
             docs.push(attr);
@@ -296,11 +351,14 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
             };
             symbol = Some(s.clone());
         } else if attr.path().is_ident("opaque") {
-            if opaque.is_some() {
-                return Err(syn::Error::new(
-                    attr.span(),
-                    "duplicate `#[opaque]` attribute",
-                ));
+            // Reject duplicate unconditional opaque.
+            if let Some(ref info) = opaque {
+                if info.variants.iter().any(|v| v.cfg.is_none()) {
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        "duplicate unconditional `#[opaque]` attribute",
+                    ));
+                }
             }
             let mut size = None;
             let mut align = None;
@@ -321,15 +379,96 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
                     "expected `#[opaque(size = N, align = M)]`",
                 ));
             };
-            opaque = Some((size, align));
+            opaque
+                .get_or_insert_with(|| OpaqueInfo { variants: vec![] })
+                .variants
+                .push(OpaqueVariant {
+                    cfg: None,
+                    size,
+                    align,
+                });
+        } else if attr.path().is_ident("cfg_attr") {
+            let syn::Meta::List(list) = &attr.meta else {
+                return Err(syn::Error::new(
+                    attr.span(),
+                    "expected `#[cfg_attr(condition, attr)]`",
+                ));
+            };
+            let parser = Punctuated::<syn::Meta, Token![,]>::parse_separated_nonempty;
+            let items = parser.parse2(list.tokens.clone())?;
+            let mut iter = items.iter();
+            let Some(condition) = iter.next() else {
+                return Err(syn::Error::new(
+                    attr.span(),
+                    "expected `#[cfg_attr(condition, attr)]`",
+                ));
+            };
+            let Some(inner_attr) = iter.next() else {
+                return Err(syn::Error::new(
+                    attr.span(),
+                    "expected `#[cfg_attr(condition, attr)]`",
+                ));
+            };
+            if iter.next().is_some() {
+                return Err(syn::Error::new(
+                    attr.span(),
+                    "expected `#[cfg_attr(condition, attr)]` with exactly two arguments",
+                ));
+            }
+
+            // Check if the inner attribute is `opaque(...)`.
+            if let syn::Meta::List(inner_list) = inner_attr {
+                if inner_list.path.is_ident("opaque") {
+                    let mut size = None;
+                    let mut align = None;
+                    inner_list.parse_nested_meta(|meta| {
+                        let lit: LitInt = meta.value()?.parse()?;
+                        if meta.path.is_ident("size") {
+                            size = Some(lit);
+                        } else if meta.path.is_ident("align") {
+                            align = Some(lit);
+                        } else {
+                            return Err(meta.error("expected `size` or `align`"));
+                        }
+                        Ok(())
+                    })?;
+                    let (Some(size), Some(align)) = (size, align) else {
+                        return Err(syn::Error::new(
+                            inner_attr.span(),
+                            "expected `#[opaque(size = N, align = M)]`",
+                        ));
+                    };
+                    opaque
+                        .get_or_insert_with(|| OpaqueInfo { variants: vec![] })
+                        .variants
+                        .push(OpaqueVariant {
+                            cfg: Some(condition.to_token_stream()),
+                            size,
+                            align,
+                        });
+                    continue;
+                }
+            }
+
+            // Not `#[cfg_attr(..., opaque(...))]` — pass through untouched.
+            passthrough.push(attr);
+        } else if attr.path().is_ident("cfg") {
+            passthrough.push(attr);
         } else {
             return Err(syn::Error::new(
                 attr.span(),
-                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]` or `#[opaque(size = N, align = M)]`",
+                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]`, \
+                 `#[opaque(size = N, align = M)]`, `#[cfg(...)]` or `#[cfg_attr(..., opaque(...))]`",
             ));
         }
     }
-    Ok((docs, symbol, opaque))
+
+    Ok(SplitAttrs {
+        docs,
+        symbol,
+        opaque,
+        passthrough,
+    })
 }
 
 fn only_docs(attrs: Vec<Attribute>) -> syn::Result<Vec<Attribute>> {
@@ -365,17 +504,17 @@ impl Parse for UnitraitInput {
                     )));
                 }
                 content.parse::<Token![;]>()?;
-                let (docs, symbol, opaque) = split_attrs(attrs)?;
-                let Some(drop_symbol) = symbol else {
+                let split = split_attrs(attrs)?;
+                let Some(drop_symbol) = split.symbol else {
                     return Err(syn::Error::new(
                         assoc.span(),
                         "opaque associated types require a `#[symbol = \"...\"]` attribute naming the extern symbol for dropping the value in place",
                     ));
                 };
-                let Some((size, align)) = opaque else {
+                let Some(opaque_info) = split.opaque else {
                     return Err(syn::Error::new(
                         assoc.span(),
-                        "opaque associated types require an `#[opaque(size = N, align = M)]` attribute",
+                        "opaque associated types require an `#[opaque(size = N, align = M)]` or `#[cfg_attr(..., opaque(...))]` attribute",
                     ));
                 };
                 if opaques.iter().any(|o| o.assoc == assoc) {
@@ -383,13 +522,13 @@ impl Parse for UnitraitInput {
                 }
                 let opaque = format_ident!("{name}{assoc}", span = assoc.span());
                 opaques.push(OpaqueDecl {
-                    docs,
+                    docs: split.docs,
+                    passthrough: split.passthrough,
                     vis: ivis,
                     assoc,
                     opaque,
-                    size,
-                    align,
                     drop_symbol,
+                    variants: opaque_info.variants,
                 });
             } else {
                 let unsafety: Option<Token![unsafe]> = content.parse()?;
@@ -422,21 +561,22 @@ impl Parse for UnitraitInput {
                     None
                 };
                 content.parse::<Token![;]>()?;
-                let (docs, symbol, opaque) = split_attrs(attrs)?;
-                if opaque.is_some() {
+                let split = split_attrs(attrs)?;
+                if split.opaque.is_some() {
                     return Err(syn::Error::new(
                         fname.span(),
                         "`#[opaque]` is only allowed on associated type declarations",
                     ));
                 }
-                let Some(symbol) = symbol else {
+                let Some(symbol) = split.symbol else {
                     return Err(syn::Error::new(
                         fname.span(),
                         "unitrait methods require a `#[symbol = \"...\"]` attribute",
                     ));
                 };
                 methods.push(Method {
-                    docs,
+                    docs: split.docs,
+                    passthrough: split.passthrough,
                     vis: ivis,
                     unsafety,
                     name: fname,
@@ -619,47 +759,68 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
     let trait_qpath = quote!(#path::#name);
 
     // The opaque structs and their Drop impls (defining-crate side).
-    let opaque_structs = opaques.iter().map(|o| {
+    // One copy per variant, each wrapped with the appropriate `#[cfg(...)]`.
+    let opaque_structs = opaques.iter().flat_map(|o| {
         let OpaqueDecl {
             docs,
+            passthrough,
             vis,
             opaque,
-            size,
-            align,
             drop_symbol,
+            variants,
             ..
         } = o;
-        quote! {
-            #(#docs)*
-            #[repr(C, align(#align))]
-            #vis struct #opaque {
-                _data: ::core::mem::MaybeUninit<[u8; #size]>,
-            }
+        variants.iter().map(move |variant| {
+            let size = &variant.size;
+            let align = &variant.align;
+            let cfg_attr = match &variant.cfg {
+                Some(cfg) => quote! {
+                    #(#passthrough)*
+                    #[cfg(#cfg)]
+                },
+                None => quote! { #(#passthrough)* },
+            };
+            quote! {
+                #(#docs)*
+                #cfg_attr
+                #[repr(C, align(#align))]
+                #vis struct #opaque {
+                    _data: ::core::mem::MaybeUninit<[u8; #size]>,
+                }
 
-            impl ::core::ops::Drop for #opaque {
-                #[inline]
-                fn drop(&mut self) {
-                    unsafe extern "Rust" {
-                        #[link_name = #drop_symbol]
-                        safe fn extern_fn(this: &mut #opaque);
+                #cfg_attr
+                impl ::core::ops::Drop for #opaque {
+                    #[inline]
+                    fn drop(&mut self) {
+                        unsafe extern "Rust" {
+                            #[link_name = #drop_symbol]
+                            safe fn extern_fn(this: &mut #opaque);
+                        }
+                        extern_fn(self)
                     }
-                    extern_fn(self)
                 }
             }
-        }
+        })
     });
 
     // The trait, with items exactly as written.
     let assoc_items = opaques.iter().map(|o| {
-        let OpaqueDecl { docs, assoc, .. } = o;
+        let OpaqueDecl {
+            docs,
+            passthrough,
+            assoc,
+            ..
+        } = o;
         quote! {
             #(#docs)*
+            #(#passthrough)*
             type #assoc;
         }
     });
     let trait_methods = methods.iter().map(|m| {
         let Method {
             docs,
+            passthrough,
             unsafety,
             name,
             args,
@@ -670,6 +831,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         let ret = ret.iter();
         quote! {
             #(#docs)*
+            #(#passthrough)*
             #unsafety fn #name(#(#argids: #argtys),*) #(-> #ret)*;
         }
     });
@@ -678,7 +840,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
     let free_fns = methods
         .iter()
         .map(|m| {
-            let Method { docs, vis, unsafety, name, symbol, args, ret } = m;
+            let Method { docs, passthrough, vis, unsafety, name, symbol, args, ret } = m;
             let params = args
                 .iter()
                 .map(|(id, ty)| {
@@ -704,6 +866,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             };
             Ok(quote! {
                 #(#docs)*
+                #(#passthrough)*
                 #[inline]
                 #vis #unsafety fn #name(#(#params),*) #ret_ty {
                     unsafe extern "Rust" {
@@ -717,23 +880,29 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         .collect::<syn::Result<Vec<_>>>()?;
 
     // Compile-time checks and drop shims for the opaque types (implementation-macro side).
+    // One copy per variant, each wrapped with the appropriate `#[cfg(...)]`.
+    // Compile-time checks and drop shims for the opaque types (implementation-macro side).
+    // The size/align bounds are derived from the opaque struct itself, so they automatically
+    // match whatever variant the defining crate emitted under its #[cfg] conditions.
     let opaque_shims = opaques.iter().map(|o| {
-        let OpaqueDecl { assoc, opaque, size, align, drop_symbol, .. } = o;
+        let OpaqueDecl { assoc, opaque, drop_symbol, passthrough, .. } = o;
         let real = quote!(<#tvar as #trait_qpath>::#assoc);
         let qopaque = quote!(#path::#opaque);
         let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
         quote! {
+            #(#passthrough)*
             const _: () = {
                 ::core::assert!(
-                    ::core::mem::size_of::<#real>() <= #size,
+                    ::core::mem::size_of::<#real>() <= ::core::mem::size_of::<#qopaque>(),
                     "unitrait: the implementation's associated type is larger than its declared opaque size",
                 );
                 ::core::assert!(
-                    ::core::mem::align_of::<#real>() <= #align,
+                    ::core::mem::align_of::<#real>() <= ::core::mem::align_of::<#qopaque>(),
                     "unitrait: the implementation's associated type requires stricter alignment than its declared opaque alignment",
                 );
             };
 
+            #(#passthrough)*
             #[unsafe(export_name = #drop_symbol)]
             fn #drop_fn(this: &mut #qopaque) {
                 // SAFETY: opaque values always hold an initialized value of the
@@ -748,11 +917,10 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         }
     });
 
-    // The method shims (implementation-macro side).
     let method_shims = methods
         .iter()
         .map(|m| {
-            let Method { unsafety, name, symbol, args, ret, .. } = m;
+            let Method { passthrough, unsafety, name, symbol, args, ret, .. } = m;
             let slots = args.iter().map(|(_, ty)| input.classify(ty)).collect::<syn::Result<Vec<_>>>()?;
             let params = args
                 .iter()
@@ -841,6 +1009,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 }
             };
             Ok(quote! {
+                #(#passthrough)*
                 #[unsafe(export_name = #symbol)]
                 fn #name(#(#params),*) #ret_ty {
                     #(#convs)*
