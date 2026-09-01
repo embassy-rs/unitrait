@@ -1,0 +1,5 @@
+error: expected `#[cfg_attr(condition, attr)]` with exactly two arguments
+ --> tests/ui/cfg_attr_too_many.rs:3:9
+  |
+3 |         #[cfg_attr(test, opaque(size = 8, align = 8), extra)]
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,4 +1,4 @@
-error: opaque associated types require an `#[opaque(size = N, align = M)]` attribute
+error: opaque associated types require an `#[opaque(size = N, align = M)]` or `#[cfg_attr(..., opaque(...))]` attribute
  --> tests/ui/opaque_missing_attr.rs:4:18
   |
 4 |         pub type Context;

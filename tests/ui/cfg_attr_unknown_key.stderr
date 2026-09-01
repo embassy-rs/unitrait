@@ -1,0 +1,5 @@
+error: expected `size` or `align`
+ --> tests/ui/cfg_attr_unknown_key.rs:3:28
+  |
+3 |         #[cfg_attr(test, opaque(size = 16, align = 8, bad = 1))]
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

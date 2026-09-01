@@ -1,4 +1,4 @@
-error: duplicate `#[opaque]` attribute
+error: duplicate unconditional `#[opaque]` attribute
  --> tests/ui/duplicate_opaque_attr.rs:4:9
   |
 4 |         #[opaque(size = 16, align = 8)]

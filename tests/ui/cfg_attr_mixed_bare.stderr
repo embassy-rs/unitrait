@@ -1,0 +1,5 @@
+error: cannot mix `#[cfg_attr(..., opaque(...))]` with bare `#[opaque]`; use only one style
+ --> tests/ui/cfg_attr_mixed_bare.rs:4:9
+  |
+4 |         #[cfg_attr(test, opaque(size = 32, align = 8))]
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
