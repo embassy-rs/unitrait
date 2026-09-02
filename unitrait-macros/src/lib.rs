@@ -6,9 +6,11 @@
 use proc_macro2::{Punct, Spacing, Span, TokenStream, TokenTree};
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, Expr, Ident, Lit, LitInt, LitStr, Token, Type, Visibility, braced, parenthesized,
+    Attribute, Expr, GenericArgument, Ident, Lit, LitInt, LitStr, PathArguments, Token,
+    TraitBoundModifier, Type, TypeParamBound, Visibility, braced, parenthesized,
 };
 
 /// Define a unitrait: a trait with a single global implementation, resolved at link time.
@@ -127,12 +129,13 @@ use syn::{
 /// # }
 /// ```
 ///
-/// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] #[symbol = "..."] [vis] type Name;`, where `N` and
-/// `M` are integer literals. It emits:
+/// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] #[symbol = "..."] [vis] type Name[: Bounds];`, where `N` and
+/// `M` are integer literals and `Bounds` is described under [marker
+/// bounds](#marker-bounds-on-opaque-types). It emits:
 ///
-/// - `type Name;` in the trait. The implementation sets it to a type of its choosing, which
-///   must have size at most `N` and alignment at most `M`; the implementation macro
-///   verifies both at compile time.
+/// - `type Name;` in the trait, with the declared bounds. The implementation sets it to a
+///   type of its choosing, which must have size at most `N` and alignment at most `M`; the
+///   implementation macro verifies both at compile time.
 /// - The opaque struct, named by concatenating the trait name and the associated type name
 ///   (`ChecksumContext` above), laid out as `MaybeUninit<[u8; N]>` with alignment `M`. Its
 ///   visibility is the one written on the `type` declaration (private if omitted, like free
@@ -153,11 +156,73 @@ use syn::{
 ///   implementation.
 /// - `&Self::Name` and `&mut Self::Name` (parameters only): the free function takes a
 ///   reference to the opaque struct.
+/// - `Pin<&Self::Name>` and `Pin<&mut Self::Name>` (parameters only): the free function
+///   takes a pinned reference to the opaque struct, and the implementation receives a
+///   pinned reference to its own value, at the address the caller pinned. Write `Pin` by
+///   its bare name; it always means [`core::pin::Pin`], whatever `Pin` happens to be in
+///   scope, and is rewritten to its absolute path everywhere it's emitted.
 ///
-/// All appear in the trait exactly as written, so implementations are ordinary safe code.
-/// Nested uses (`Option<Self::Name>`, `&[Self::Name]`, ...) are rejected at compile time:
-/// they cannot be bridged across the extern symbol, since the caller-side and
-/// implementation-side types are not layout-compatible beyond the top level.
+/// Except for that rewriting of `Pin`, they appear in the trait exactly as written, so
+/// implementations are ordinary safe code. Nested uses (`Option<Self::Name>`,
+/// `&[Self::Name]`, ...) are rejected at compile time: they cannot be bridged across the
+/// extern symbol, since the caller-side and implementation-side types are not
+/// layout-compatible beyond the top level.
+///
+/// # Marker bounds on opaque types
+///
+/// The caller can't see the implementation's associated type, so the opaque struct can't
+/// derive its auto traits from it. Instead, the opaque struct implements *no* auto trait by
+/// default, and each one is opted into by declaring it as a bound on the associated type:
+///
+/// ```
+/// unitrait::unitrait! {
+///     pub trait Session {
+///         /// Can be moved between threads, but not shared, and must not be moved once
+///         /// it has been pinned.
+///         #[opaque(size = 64, align = 8)]
+///         #[symbol = "_session_state_drop"]
+///         pub type State: Send;
+///
+///         /// A plain copyable handle: no drop glue, and duplicating it is free.
+///         #[opaque(size = 4, align = 4)]
+///         pub type Id: Copy + Send + Sync;
+///
+///         #[symbol = "_session_open"]
+///         pub fn session_open() -> Self::State;
+///
+///         #[symbol = "_session_id"]
+///         pub fn session_id(state: &Self::State) -> Self::Id;
+///     }
+///
+///     macro session_impl(path = $crate);
+/// }
+/// # struct MySession;
+/// # impl Session for MySession {
+/// #     type State = u64;
+/// #     type Id = u32;
+/// #     fn session_open() -> u64 { 7 }
+/// #     fn session_id(state: &u64) -> u32 { *state as u32 }
+/// # }
+/// # session_impl!(MySession);
+/// # fn main() { let s = session_open(); assert_eq!(core::mem::size_of_val(&session_id(&s)), 4); }
+/// ```
+///
+/// The supported bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and
+/// `Copy`. Each one is emitted both as a bound on the associated type — so the compiler
+/// rejects an implementation whose type doesn't implement it — and as an `impl` on the
+/// opaque struct, which is therefore never more permissive than the implementation's own
+/// type. They must be written by their bare names; they always mean the `core` traits, so a
+/// trait of the same name in scope where `unitrait!` is invoked changes nothing, and no
+/// other bound (including lifetimes and `?Sized`) is accepted.
+///
+/// `Copy` additionally means the opaque struct has no drop glue: no `Drop` impl is emitted
+/// for it, and the declaration must not carry a `#[symbol = "..."]` attribute, since there
+/// is no drop function to export. `Clone` is implemented alongside `Copy`.
+///
+/// Not declaring a bound is what makes the other features sound. In particular, an opaque
+/// type without `Unpin` can only be placed behind a `Pin` by actually pinning it, which is
+/// what lets `Pin<&mut Self::Name>` parameters hand the implementation a genuinely pinned
+/// value.
 ///
 /// # Implementing a unitrait
 ///
@@ -219,7 +284,9 @@ use syn::{
 /// may define and implement the unitrait through *different versions* of the defining crate
 /// (as happens during major-version transitions of the defining crate) and still link
 /// correctly, as long as the symbol names and signatures match. For opaque types, the size
-/// and alignment are part of that ABI contract too: shrinking either is ABI-breaking.
+/// and alignment are part of that ABI contract too: shrinking either is ABI-breaking, and
+/// so is changing the declared marker bounds, since the two sides would then disagree on
+/// what the opaque struct implements.
 #[proc_macro]
 pub fn unitrait(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as UnitraitInput);
@@ -248,7 +315,94 @@ struct OpaqueDecl {
     opaque: Ident,
     size: LitInt,
     align: LitInt,
-    drop_symbol: LitStr,
+    /// The marker traits declared as bounds on the associated type.
+    bounds: Vec<Marker>,
+    /// The symbol of the function dropping the value in place. `None` for `Copy` opaque
+    /// types, which have no drop glue.
+    drop_symbol: Option<LitStr>,
+}
+
+/// A marker trait that may be declared as a bound on an opaque associated type.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Marker {
+    Send,
+    Sync,
+    Unpin,
+    UnwindSafe,
+    RefUnwindSafe,
+    Copy,
+}
+
+const MARKERS: &[(&str, Marker)] = &[
+    ("Send", Marker::Send),
+    ("Sync", Marker::Sync),
+    ("Unpin", Marker::Unpin),
+    ("UnwindSafe", Marker::UnwindSafe),
+    ("RefUnwindSafe", Marker::RefUnwindSafe),
+    ("Copy", Marker::Copy),
+];
+
+const BOUND_HELP: &str = "only the marker traits `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` are allowed as bounds on an opaque associated type, written by their bare names";
+
+impl Marker {
+    fn from_ident(ident: &Ident) -> Option<Marker> {
+        MARKERS.iter().find(|(n, _)| ident == n).map(|&(_, m)| m)
+    }
+
+    fn name(self) -> &'static str {
+        MARKERS.iter().find(|&&(_, m)| m == self).unwrap().0
+    }
+
+    /// The absolute path of the trait.
+    ///
+    /// Bounds are matched by their bare name and always mean the `core` trait, so a trait
+    /// of the same name in scope where `unitrait!` is invoked can't make the bound on the
+    /// associated type and the `impl` on the opaque struct refer to different traits.
+    fn path(self) -> TokenStream {
+        match self {
+            Marker::Send => quote!(::core::marker::Send),
+            Marker::Sync => quote!(::core::marker::Sync),
+            Marker::Unpin => quote!(::core::marker::Unpin),
+            Marker::UnwindSafe => quote!(::core::panic::UnwindSafe),
+            Marker::RefUnwindSafe => quote!(::core::panic::RefUnwindSafe),
+            Marker::Copy => quote!(::core::marker::Copy),
+        }
+    }
+}
+
+/// Parses the optional `: Send + Sync` bounds of an opaque associated type declaration.
+fn parse_bounds(input: ParseStream) -> syn::Result<Vec<Marker>> {
+    let mut bounds = vec![];
+    if !input.peek(Token![:]) {
+        return Ok(bounds);
+    }
+    input.parse::<Token![:]>()?;
+    let parsed = Punctuated::<TypeParamBound, Token![+]>::parse_separated_nonempty(input)?;
+    for bound in &parsed {
+        let TypeParamBound::Trait(t) = bound else {
+            return Err(syn::Error::new(bound.span(), BOUND_HELP));
+        };
+        let plain = matches!(t.modifier, TraitBoundModifier::None)
+            && t.lifetimes.is_none()
+            && t.path.leading_colon.is_none()
+            && t.path.segments.len() == 1
+            && t.path.segments[0].arguments.is_none();
+        if !plain {
+            return Err(syn::Error::new(bound.span(), BOUND_HELP));
+        }
+        let ident = &t.path.segments[0].ident;
+        let Some(marker) = Marker::from_ident(ident) else {
+            return Err(syn::Error::new(ident.span(), BOUND_HELP));
+        };
+        if bounds.contains(&marker) {
+            return Err(syn::Error::new(
+                ident.span(),
+                format!("duplicate `{}` bound", marker.name()),
+            ));
+        }
+        bounds.push(marker);
+    }
+    Ok(bounds)
 }
 
 struct Method {
@@ -359,6 +513,7 @@ impl Parse for UnitraitInput {
             if content.peek(Token![type]) {
                 content.parse::<Token![type]>()?;
                 let assoc: Ident = content.parse()?;
+                let bounds = parse_bounds(&content)?;
                 if content.peek(Token![=]) {
                     return Err(content.error(format!(
                         "the opaque type's name is derived automatically as `{name}{assoc}` (trait name + associated type name); remove the `= ...`"
@@ -366,11 +521,21 @@ impl Parse for UnitraitInput {
                 }
                 content.parse::<Token![;]>()?;
                 let (docs, symbol, opaque) = split_attrs(attrs)?;
-                let Some(drop_symbol) = symbol else {
-                    return Err(syn::Error::new(
-                        assoc.span(),
-                        "opaque associated types require a `#[symbol = \"...\"]` attribute naming the extern symbol for dropping the value in place",
-                    ));
+                let drop_symbol = match (symbol, bounds.contains(&Marker::Copy)) {
+                    (symbol @ Some(_), false) => symbol,
+                    (None, true) => None,
+                    (None, false) => {
+                        return Err(syn::Error::new(
+                            assoc.span(),
+                            "opaque associated types require a `#[symbol = \"...\"]` attribute naming the extern symbol for dropping the value in place",
+                        ));
+                    }
+                    (Some(symbol), true) => {
+                        return Err(syn::Error::new(
+                            symbol.span(),
+                            "`Copy` opaque associated types have no drop glue, so they must not have a `#[symbol = \"...\"]` attribute",
+                        ));
+                    }
                 };
                 let Some((size, align)) = opaque else {
                     return Err(syn::Error::new(
@@ -389,6 +554,7 @@ impl Parse for UnitraitInput {
                     opaque,
                     size,
                     align,
+                    bounds,
                     drop_symbol,
                 });
             } else {
@@ -486,6 +652,20 @@ enum Slot {
     Ref(usize),
     /// `&mut Self::Name`.
     RefMut(usize),
+    /// `Pin<&Self::Name>`.
+    PinRef(usize),
+    /// `Pin<&mut Self::Name>`.
+    PinRefMut(usize),
+}
+
+impl Slot {
+    /// Whether the slot borrows an opaque value, and therefore can't be returned.
+    fn is_borrow(&self) -> bool {
+        matches!(
+            self,
+            Slot::Ref(_) | Slot::RefMut(_) | Slot::PinRef(_) | Slot::PinRefMut(_)
+        )
+    }
 }
 
 /// Returns the associated type name if `ty` is exactly `Self::Name`.
@@ -501,6 +681,34 @@ fn as_self_assoc(ty: &Type) -> Option<&Ident> {
         }
         _ => None,
     }
+}
+
+/// Returns the single generic argument of `ty` if it is exactly `Pin<T>` for some `T`
+/// mentioning `Self`.
+///
+/// Only the bare name `Pin` is recognized, and it's always rewritten to
+/// `::core::pin::Pin`, so a `Pin` shadowing `core`'s in either the defining or the
+/// implementing crate can't change what the generated code means.
+fn as_pin_self(ty: &Type) -> Option<&Type> {
+    let Type::Path(tp) = ty else { return None };
+    if tp.qself.is_some() || tp.path.leading_colon.is_some() || tp.path.segments.len() != 1 {
+        return None;
+    }
+    let seg = &tp.path.segments[0];
+    if seg.ident != "Pin" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    if args.args.len() != 1 {
+        return None;
+    }
+    let GenericArgument::Type(inner) = &args.args[0] else {
+        return None;
+    };
+    find_self(inner.to_token_stream())?;
+    Some(inner)
 }
 
 /// Returns the span of the first `Self` token anywhere in the stream, if any.
@@ -552,13 +760,55 @@ impl UnitraitInput {
                 Slot::Ref(i)
             });
         }
+        if let Some(inner) = as_pin_self(ty) {
+            let Type::Reference(r) = inner else {
+                return Err(syn::Error::new(
+                    inner.span(),
+                    "`Pin` may only be used with an opaque associated type as `Pin<&Self::Name>` or `Pin<&mut Self::Name>`",
+                ));
+            };
+            if let Some(lt) = &r.lifetime {
+                return Err(syn::Error::new(
+                    lt.span(),
+                    "explicit lifetimes on references to opaque associated types are not supported",
+                ));
+            }
+            let Some(assoc) = as_self_assoc(&r.elem) else {
+                return Err(syn::Error::new(
+                    r.elem.span(),
+                    "`Pin` may only be used with an opaque associated type as `Pin<&Self::Name>` or `Pin<&mut Self::Name>`",
+                ));
+            };
+            let i = self.lookup(assoc)?;
+            return Ok(if r.mutability.is_some() {
+                Slot::PinRefMut(i)
+            } else {
+                Slot::PinRef(i)
+            });
+        }
         if let Some(span) = find_self(ty.to_token_stream()) {
             return Err(syn::Error::new(
                 span,
-                "`Self` may only appear as `Self::Name`, `&Self::Name` or `&mut Self::Name` at the top level of a parameter or return type: nested uses cannot be bridged across the extern symbol",
+                "`Self` may only appear as `Self::Name`, `&Self::Name`, `&mut Self::Name`, `Pin<&Self::Name>` or `Pin<&mut Self::Name>` at the top level of a parameter or return type: nested uses cannot be bridged across the extern symbol",
             ));
         }
         Ok(Slot::Plain)
+    }
+
+    /// The type to use for a slot in the trait declaration, with `Self::Name` kept as
+    /// written and `Pin` rewritten to its absolute path.
+    fn trait_ty(&self, ty: &Type, slot: &Slot) -> TokenStream {
+        match slot {
+            Slot::PinRef(i) => {
+                let assoc = &self.opaques[*i].assoc;
+                quote!(::core::pin::Pin<&Self::#assoc>)
+            }
+            Slot::PinRefMut(i) => {
+                let assoc = &self.opaques[*i].assoc;
+                quote!(::core::pin::Pin<&mut Self::#assoc>)
+            }
+            _ => ty.to_token_stream(),
+        }
     }
 
     /// The type to use for a slot in the free functions and extern declarations
@@ -574,6 +824,14 @@ impl UnitraitInput {
             Slot::RefMut(i) => {
                 let op = &self.opaques[*i].opaque;
                 quote!(&mut #op)
+            }
+            Slot::PinRef(i) => {
+                let op = &self.opaques[*i].opaque;
+                quote!(::core::pin::Pin<&#op>)
+            }
+            Slot::PinRefMut(i) => {
+                let op = &self.opaques[*i].opaque;
+                quote!(::core::pin::Pin<&mut #op>)
             }
         }
     }
@@ -595,6 +853,14 @@ impl UnitraitInput {
             Slot::RefMut(i) => {
                 let op = &self.opaques[*i].opaque;
                 quote!(&mut #path::#op)
+            }
+            Slot::PinRef(i) => {
+                let op = &self.opaques[*i].opaque;
+                quote!(::core::pin::Pin<&#path::#op>)
+            }
+            Slot::PinRefMut(i) => {
+                let op = &self.opaques[*i].opaque;
+                quote!(::core::pin::Pin<&mut #path::#op>)
             }
         }
     }
@@ -626,53 +892,122 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             opaque,
             size,
             align,
+            bounds,
             drop_symbol,
             ..
         } = o;
+        // One impl per declared bound. The trait requires the implementation's associated
+        // type to implement it, and an opaque value is just an implementation value in
+        // disguise, so the two agree by construction; the bounds that aren't declared stay
+        // unimplemented thanks to the marker field below.
+        let marker_impls = bounds.iter().map(|b| {
+            let path = b.path();
+            match b {
+                // SAFETY: an opaque value holds a value of the implementation's associated
+                // type, which the trait bound requires to be `Send`/`Sync`.
+                Marker::Send | Marker::Sync => quote!(unsafe impl #path for #opaque {}),
+                // A `Copy` associated type has no drop glue, so no `Drop` impl is emitted
+                // for the opaque struct and duplicating its bytes duplicates a value the
+                // implementation itself declared trivially copyable.
+                Marker::Copy => quote! {
+                    impl #path for #opaque {}
+
+                    impl ::core::clone::Clone for #opaque {
+                        #[inline]
+                        fn clone(&self) -> Self {
+                            *self
+                        }
+                    }
+                },
+                _ => quote!(impl #path for #opaque {}),
+            }
+        });
+        let drop_impl = drop_symbol.as_ref().map(|drop_symbol| {
+            quote! {
+                impl ::core::ops::Drop for #opaque {
+                    #[inline]
+                    fn drop(&mut self) {
+                        unsafe extern "Rust" {
+                            #[link_name = #drop_symbol]
+                            safe fn extern_fn(this: &mut #opaque);
+                        }
+                        extern_fn(self)
+                    }
+                }
+            }
+        });
         quote! {
             #(#docs)*
             #[repr(C, align(#align))]
             #vis struct #opaque {
                 _data: ::core::mem::MaybeUninit<[u8; #size]>,
+                // The opaque struct's auto traits must match those of the implementation's
+                // associated type, which the defining crate doesn't know. This zero-sized
+                // marker implements none of them, so they're all opted into explicitly
+                // above, guarded by the corresponding bound on the associated type.
+                _not_auto: ::core::marker::PhantomData<(
+                    *mut (),
+                    ::core::marker::PhantomPinned,
+                    &'static mut (),
+                    ::core::cell::UnsafeCell<()>,
+                )>,
             }
 
-            impl ::core::ops::Drop for #opaque {
-                #[inline]
-                fn drop(&mut self) {
-                    unsafe extern "Rust" {
-                        #[link_name = #drop_symbol]
-                        safe fn extern_fn(this: &mut #opaque);
-                    }
-                    extern_fn(self)
-                }
-            }
+            #(#marker_impls)*
+            #drop_impl
         }
     });
 
     // The trait, with items exactly as written.
     let assoc_items = opaques.iter().map(|o| {
-        let OpaqueDecl { docs, assoc, .. } = o;
-        quote! {
-            #(#docs)*
-            type #assoc;
-        }
-    });
-    let trait_methods = methods.iter().map(|m| {
-        let Method {
+        let OpaqueDecl {
             docs,
-            unsafety,
-            name,
-            args,
-            ret,
+            assoc,
+            bounds,
             ..
-        } = m;
-        let (argids, argtys): (Vec<_>, Vec<_>) = args.iter().cloned().unzip();
-        let ret = ret.iter();
+        } = o;
+        let bounds = if bounds.is_empty() {
+            quote!()
+        } else {
+            let paths = bounds.iter().map(|b| b.path());
+            quote!(: #(#paths)+*)
+        };
         quote! {
             #(#docs)*
-            #unsafety fn #name(#(#argids: #argtys),*) #(-> #ret)*;
+            type #assoc #bounds;
         }
     });
+    let trait_methods = methods
+        .iter()
+        .map(|m| {
+            let Method {
+                docs,
+                unsafety,
+                name,
+                args,
+                ret,
+                ..
+            } = m;
+            let params = args
+                .iter()
+                .map(|(id, ty)| {
+                    let tty = input.trait_ty(ty, &input.classify(ty)?);
+                    Ok(quote!(#id: #tty))
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            let ret_ty = match ret {
+                None => quote!(),
+                Some(ty) => {
+                    let tty = input.trait_ty(ty, &input.classify(ty)?);
+                    quote!(-> #tty)
+                }
+            };
+            Ok(quote! {
+                #(#docs)*
+                #unsafety fn #name(#(#params),*) #ret_ty;
+            })
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
 
     // The free functions (defining-crate side).
     let free_fns = methods
@@ -690,7 +1025,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 None => quote!(),
                 Some(ty) => {
                     let slot = input.classify(ty)?;
-                    if matches!(slot, Slot::Ref(_) | Slot::RefMut(_)) {
+                    if slot.is_borrow() {
                         return Err(syn::Error::new(ty.span(), "references to opaque associated types are not supported in return position"));
                     }
                     let cty = input.caller_ty(ty, &slot);
@@ -722,6 +1057,22 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         let real = quote!(<#tvar as #trait_qpath>::#assoc);
         let qopaque = quote!(#path::#opaque);
         let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
+        // `Copy` opaque types have no `Drop` impl, so there's nothing to export.
+        let drop_shim = drop_symbol.as_ref().map(|drop_symbol| {
+            quote! {
+                #[unsafe(export_name = #drop_symbol)]
+                fn #drop_fn(this: &mut #qopaque) {
+                    // SAFETY: opaque values always hold an initialized value of the
+                    // implementation's associated type (they can only be obtained from
+                    // methods returning one), size and alignment are checked at compile
+                    // time, and this is only called from the opaque struct's `Drop` impl,
+                    // so the value is never used again.
+                    unsafe {
+                        ::core::ptr::drop_in_place(this as *mut #qopaque as *mut #real);
+                    }
+                }
+            }
+        });
         quote! {
             const _: () = {
                 ::core::assert!(
@@ -734,17 +1085,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 );
             };
 
-            #[unsafe(export_name = #drop_symbol)]
-            fn #drop_fn(this: &mut #qopaque) {
-                // SAFETY: opaque values always hold an initialized value of the
-                // implementation's associated type (they can only be obtained from methods
-                // returning one), size and alignment are checked at compile time, and this
-                // is only called from the opaque struct's `Drop` impl, so the value is
-                // never used again.
-                unsafe {
-                    ::core::ptr::drop_in_place(this as *mut #qopaque as *mut #real);
-                }
-            }
+            #drop_shim
         }
     });
 
@@ -798,6 +1139,30 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                         let (real, qopaque) = (real(i), qopaque(i));
                         Some(quote! {
                             let #id = unsafe { &mut *(#id as *mut #qopaque as *mut #real) };
+                        })
+                    }
+                    // SAFETY (both): as above, plus the implementation's value lives at the
+                    // very address the caller pinned, and the opaque struct is `Unpin` only
+                    // if the associated type is, so the caller could only have built this
+                    // `Pin` by pinning the opaque value (or with `new_unchecked`, upholding
+                    // the same contract). Re-pinning the value in place therefore keeps the
+                    // pinning guarantee the caller already granted.
+                    Slot::PinRef(i) => {
+                        let (real, qopaque) = (real(i), qopaque(i));
+                        Some(quote! {
+                            let #id = unsafe {
+                                let #id: &#qopaque = ::core::pin::Pin::get_ref(#id);
+                                ::core::pin::Pin::new_unchecked(&*(#id as *const #qopaque as *const #real))
+                            };
+                        })
+                    }
+                    Slot::PinRefMut(i) => {
+                        let (real, qopaque) = (real(i), qopaque(i));
+                        Some(quote! {
+                            let #id = unsafe {
+                                let #id: &mut #qopaque = ::core::pin::Pin::get_unchecked_mut(#id);
+                                ::core::pin::Pin::new_unchecked(&mut *(#id as *mut #qopaque as *mut #real))
+                            };
                         })
                     }
                 }

@@ -1,0 +1,5 @@
+error: `Copy` opaque associated types have no drop glue, so they must not have a `#[symbol = "..."]` attribute
+ --> tests/ui/copy_with_symbol.rs:4:20
+  |
+4 |         #[symbol = "_ui_copy_with_symbol_drop"]
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^

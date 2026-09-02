@@ -30,10 +30,29 @@ fn ui() {
     t.compile_fail("tests/ui/empty_path.rs");
     t.compile_fail("tests/ui/align_not_power_of_two.rs");
 
+    // Errors in the bounds of an opaque associated type.
+    t.compile_fail("tests/ui/bound_unsupported.rs");
+    t.compile_fail("tests/ui/bound_path.rs");
+    t.compile_fail("tests/ui/bound_lifetime.rs");
+    t.compile_fail("tests/ui/bound_maybe_sized.rs");
+    t.compile_fail("tests/ui/bound_duplicate.rs");
+    t.compile_fail("tests/ui/copy_with_symbol.rs");
+
+    // Errors in `Pin` parameters.
+    t.compile_fail("tests/ui/pin_by_value.rs");
+    t.compile_fail("tests/ui/pin_lifetime.rs");
+    t.compile_fail("tests/ui/pin_return.rs");
+
     // Errors when supplying an implementation.
     t.compile_fail("tests/ui/impl_not_implemented.rs");
     t.compile_fail("tests/ui/impl_too_big.rs");
     t.compile_fail("tests/ui/impl_overaligned.rs");
     t.compile_fail("tests/ui/impl_wrong_signature.rs");
     t.compile_fail("tests/ui/impl_not_a_type.rs");
+    t.compile_fail("tests/ui/impl_not_send.rs");
+    t.compile_fail("tests/ui/impl_not_copy.rs");
+
+    // Errors when using an opaque type beyond its declared bounds.
+    t.compile_fail("tests/ui/opaque_not_auto.rs");
+    t.compile_fail("tests/ui/opaque_not_copy.rs");
 }

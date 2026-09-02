@@ -1,0 +1,32 @@
+error[E0382]: use of moved value: `ctx`
+  --> tests/ui/opaque_not_copy.rs:35:10
+   |
+32 |     let ctx = new();
+   |         --- move occurs because `ctx` has type `FooContext`, which does not implement the `Copy` trait
+33 |     take(ctx);
+   |          --- value moved here
+34 |     // Without a `Copy` bound the opaque type isn't `Copy`, even though `u32` is.
+35 |     take(ctx);
+   |          ^^^ value used here after move
+   |
+note: consider changing this parameter type in function `take` to borrow instead if owning the value isn't necessary
+  --> tests/ui/opaque_not_copy.rs:5:18
+   |
+ 5 |         pub type Context;
+   |                  ^^^^^^^ this parameter takes ownership of the value
+...
+11 |         pub fn take(ctx: Self::Context);
+   |                ---- in this function
+note: if `FooContext` implemented `Clone`, you could clone the value
+  --> tests/ui/opaque_not_copy.rs:1:1
+   |
+ 1 | / unitrait::unitrait! {
+ 2 | |     pub trait Foo {
+ 3 | |         #[opaque(size = 8, align = 4)]
+ 4 | |         #[symbol = "_ui_opaque_not_copy_drop"]
+ 5 | |         pub type Context;
+   | |________________________^ consider implementing `Clone` for this type
+...
+33 |       take(ctx);
+   |            --- you could clone this value
+   = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)

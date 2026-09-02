@@ -1,0 +1,18 @@
+error[E0277]: the trait bound `String: Copy` is not satisfied
+  --> tests/ui/impl_not_copy.rs:16:20
+   |
+16 |     type Context = String;
+   |                    ^^^^^^ the trait `Copy` is not implemented for `String`
+   |
+note: required by a bound in `Foo::Context`
+  --> tests/ui/impl_not_copy.rs:1:1
+   |
+ 1 | / unitrait::unitrait! {
+ 2 | |     pub trait Foo {
+ 3 | |         #[opaque(size = 32, align = 8)]
+ 4 | |         pub type Context: Copy;
+...  |
+10 | |     macro foo_impl(path = $crate);
+11 | | }
+   | |_^ required by this bound in `Foo::Context`
+   = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)

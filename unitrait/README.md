@@ -83,10 +83,26 @@ Callers see `HashContext` (named after the trait plus the associated type), an
 opaque type with the declared size and alignment; the implementation sets
 `type Context` to its actual state type, and the implementation macro checks at
 compile time that it fits. A trait may declare any number of opaque types, and
-methods may use each as `Self::Name`, `&Self::Name` or `&mut Self::Name` in
-any parameter, and return one by value. Opaque values are only obtainable from
-methods returning one, so they always hold initialized state — the free
-functions are safe, and dropping one drops the implementation's value in
-place, through the opaque type's own extern symbol.
+methods may use each as `Self::Name`, `&Self::Name`, `&mut Self::Name`,
+`Pin<&Self::Name>` or `Pin<&mut Self::Name>` in any parameter, and return one
+by value. Opaque values are only obtainable from methods returning one, so they
+always hold initialized state — the free functions are safe, and dropping one
+drops the implementation's value in place, through the opaque type's own extern
+symbol.
+
+Since the caller can't see what type the implementation picked, an opaque type
+implements no auto trait by default. Marker traits are opted into by declaring
+them as bounds on the associated type, which the compiler then enforces on the
+implementation:
+
+```rust,ignore
+/// Sendable between threads, but not shareable.
+#[opaque(size = 128, align = 16)]
+#[symbol = "_hash_context_drop"]
+pub type Context: Send;
+```
+
+`Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` are supported;
+a `Copy` opaque type has no drop glue, and so needs no `#[symbol]`.
 
 See the documentation of the `unitrait!` macro for the full details.

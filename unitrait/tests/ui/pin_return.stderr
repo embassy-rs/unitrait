@@ -1,0 +1,5 @@
+error: references to opaque associated types are not supported in return position
+ --> tests/ui/pin_return.rs:8:25
+  |
+8 |         pub fn get() -> Pin<&mut Self::Context>;
+  |                         ^^^
