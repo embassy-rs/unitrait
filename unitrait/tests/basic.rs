@@ -1,3 +1,4 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub struct Item(pub u64);
@@ -35,6 +36,9 @@ unitrait::unitrait! {
 
 static LEVEL: AtomicU32 = AtomicU32::new(7);
 
+/// Tests run in parallel and both read and write `LEVEL`, so they take turns.
+static LEVEL_LOCK: Mutex<()> = Mutex::new(());
+
 struct MyDriver;
 
 impl Driver for MyDriver {
@@ -60,6 +64,8 @@ test_driver_impl!(MyDriver);
 
 #[test]
 fn test_dispatch_type_dispatches_to_impl() {
+    let _guard = LEVEL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    Frob::set_level(7, false);
     assert_eq!(Frob::level(), 7);
     Frob::set_level(10, true);
     assert_eq!(Frob::level(), 20);
@@ -76,6 +82,7 @@ fn via_trait<T: Driver>(level: u32) -> u32 {
 
 #[test]
 fn test_dispatch_type_implements_trait() {
+    let _guard = LEVEL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // The dispatch type is an implementation of the trait, usable in generic code.
     assert_eq!(via_trait::<Frob>(5), 5);
     assert_eq!(via_trait::<MyDriver>(6), 6);

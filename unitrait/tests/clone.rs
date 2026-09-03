@@ -1,6 +1,7 @@
 //! An opaque type with a `Clone` bound is cloned by the implementation, through its own
 //! extern symbol.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 unitrait::unitrait! {
@@ -44,6 +45,10 @@ unitrait::unitrait! {
 
 static CLONES: AtomicU32 = AtomicU32::new(0);
 static DROPS: AtomicU32 = AtomicU32::new(0);
+
+/// Tests run in parallel, so those that count clones and drops take this to keep each
+/// other's activity out of their deltas.
+static COUNTERS: Mutex<()> = Mutex::new(());
 
 struct MyImpl;
 
@@ -109,6 +114,7 @@ fn test_clone_bound_is_implemented() {
 
 #[test]
 fn test_clone_goes_through_the_implementation() {
+    let _guard = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
     let clones = CLONES.load(Ordering::Relaxed);
 
     let mut a = Buffers::buf_new(1);
@@ -127,6 +133,7 @@ fn test_clone_goes_through_the_implementation() {
 
 #[test]
 fn test_clone_from_goes_through_clone() {
+    let _guard = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
     let (clones, drops) = (
         CLONES.load(Ordering::Relaxed),
         DROPS.load(Ordering::Relaxed),
@@ -145,6 +152,7 @@ fn test_clone_from_goes_through_clone() {
 
 #[test]
 fn test_clones_are_dropped() {
+    let _guard = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
     let drops = DROPS.load(Ordering::Relaxed);
     {
         let a = Buffers::buf_new(1);
