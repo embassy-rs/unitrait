@@ -1,0 +1,5 @@
+error: `Copy` and `Clone` are mutually exclusive: a `Copy` opaque type already implements `Clone` by copying its bytes
+ --> tests/ui/copy_with_clone_bound.rs:5:34
+  |
+5 |         pub type Context: Copy + Clone;
+  |                                  ^^^^^

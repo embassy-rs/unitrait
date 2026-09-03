@@ -1,0 +1,5 @@
+error: an opaque associated type without a `Clone` bound can't be cloned, so it must not have a `#[clone_symbol = "..."]` attribute; add a `Clone` bound to give it one
+ --> tests/ui/clone_symbol_without_bound.rs:4:26
+  |
+4 |         #[clone_symbol = "_ui_clone_symbol_without_bound_clone"]
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

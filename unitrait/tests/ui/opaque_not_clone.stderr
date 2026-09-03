@@ -1,0 +1,15 @@
+error[E0599]: no method named `clone` found for struct `FooContext` in the current scope
+  --> tests/ui/opaque_not_clone.rs:28:17
+   |
+ 1 | / unitrait::unitrait! {
+ 2 | |     pub trait Foo {
+ 3 | |         #[opaque(size = 8, align = 4)]
+ 4 | |         pub type Context;
+   | |________________________- method `clone` not found for this struct
+...
+28 |       let _ = ctx.clone();
+   |                   ^^^^^ method not found in `FooContext`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `clone`, perhaps you need to implement it:
+           candidate #1: `Clone`

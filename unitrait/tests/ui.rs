@@ -12,6 +12,7 @@ fn ui() {
     t.compile_fail("tests/ui/symbol_not_namevalue.rs");
     t.compile_fail("tests/ui/symbol_not_string.rs");
     t.compile_fail("tests/ui/method_with_drop_symbol.rs");
+    t.compile_fail("tests/ui/method_with_clone_symbol.rs");
     t.compile_fail("tests/ui/self_value.rs");
     t.compile_fail("tests/ui/self_ref.rs");
     t.compile_fail("tests/ui/self_ref_mut.rs");
@@ -21,6 +22,9 @@ fn ui() {
     t.compile_fail("tests/ui/drop_symbol_not_string.rs");
     t.compile_fail("tests/ui/drop_bound_without_symbol.rs");
     t.compile_fail("tests/ui/drop_symbol_without_bound.rs");
+    t.compile_fail("tests/ui/duplicate_clone_symbol_attr.rs");
+    t.compile_fail("tests/ui/clone_bound_without_symbol.rs");
+    t.compile_fail("tests/ui/clone_symbol_without_bound.rs");
     t.compile_fail("tests/ui/opaque_missing_attr.rs");
     t.compile_fail("tests/ui/opaque_missing_align.rs");
     t.compile_fail("tests/ui/opaque_unknown_key.rs");
@@ -43,6 +47,7 @@ fn ui() {
     t.compile_fail("tests/ui/bound_duplicate.rs");
     t.compile_fail("tests/ui/bound_duplicate_drop.rs");
     t.compile_fail("tests/ui/copy_with_drop_bound.rs");
+    t.compile_fail("tests/ui/copy_with_clone_bound.rs");
 
     // Errors in `Pin` parameters.
     t.compile_fail("tests/ui/pin_by_value.rs");
@@ -57,10 +62,12 @@ fn ui() {
     t.compile_fail("tests/ui/impl_not_a_type.rs");
     t.compile_fail("tests/ui/impl_not_send.rs");
     t.compile_fail("tests/ui/impl_not_copy.rs");
+    t.compile_fail("tests/ui/impl_not_clone.rs");
     t.compile_fail("tests/ui/impl_needs_drop.rs");
     t.compile_fail("tests/ui/impl_contains_needs_drop.rs");
 
     // Errors when using an opaque type beyond its declared bounds.
     t.compile_fail("tests/ui/opaque_not_auto.rs");
     t.compile_fail("tests/ui/opaque_not_copy.rs");
+    t.compile_fail("tests/ui/opaque_not_clone.rs");
 }

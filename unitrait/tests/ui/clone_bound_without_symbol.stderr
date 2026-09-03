@@ -1,5 +1,5 @@
 error: an opaque associated type with a `Clone` bound requires a `#[clone_symbol = "..."]` attribute naming the extern symbol for cloning the value
- --> tests/ui/bound_unsupported.rs:5:27
+ --> tests/ui/clone_bound_without_symbol.rs:4:27
   |
-5 |         pub type Context: Clone + Drop;
+4 |         pub type Context: Clone;
   |                           ^^^^^

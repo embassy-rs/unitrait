@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `Drop` bound on opaque associated types: `type Name: Send + Drop;`. It declares
   that the opaque type has drop glue, and requires a `#[drop_symbol = "..."]` attribute
   naming the symbol to drop through. It's mutually exclusive with `Copy`.
+- Added the `Clone` bound on opaque associated types. It requires a
+  `#[clone_symbol = "..."]` attribute, and `clone` dispatches through that symbol, since only
+  the implementation can duplicate a value of a type the caller can't see. `clone_from` is
+  left at its default, so it goes through `clone` too. It's mutually exclusive with `Copy`,
+  which already provides `Clone`.
 - **Breaking**: an opaque associated type without a `Drop` bound now has no `Drop` impl, and
   the implementation macro checks at compile time that the implementation's associated type
   has no drop glue. Previously every non-`Copy` opaque type had drop glue.

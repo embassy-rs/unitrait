@@ -129,7 +129,7 @@ use syn::{
 /// # }
 /// ```
 ///
-/// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] [#[drop_symbol = "..."]] [vis] type Name[: Bounds];`, where `N` and
+/// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] [#[drop_symbol = "..."]] [#[clone_symbol = "..."]] [vis] type Name[: Bounds];`, where `N` and
 /// `M` are integer literals and `Bounds` is described under [marker
 /// bounds](#marker-bounds-on-opaque-types) and [dropping](#dropping-opaque-types). It emits:
 ///
@@ -202,10 +202,11 @@ use syn::{
 /// unitrait::unitrait! {
 ///     pub trait Session {
 ///         /// Can be moved between threads, but not shared, and must not be moved once
-///         /// it has been pinned.
+///         /// it has been pinned. Duplicating one duplicates the implementation's state.
 ///         #[opaque(size = 64, align = 8)]
 ///         #[drop_symbol = "_session_state_drop"]
-///         pub type State: Send + Drop;
+///         #[clone_symbol = "_session_state_clone"]
+///         pub type State: Send + Clone + Drop;
 ///
 ///         /// A plain copyable handle: no drop glue, and duplicating it is free.
 ///         #[opaque(size = 4, align = 4)]
@@ -231,18 +232,26 @@ use syn::{
 /// # fn main() { let s = session_open(); assert_eq!(core::mem::size_of_val(&session_id(&s)), 4); }
 /// ```
 ///
-/// The supported marker bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`
-/// and `Copy`, alongside the `Drop` bound described [above](#dropping-opaque-types). Each
-/// marker is emitted both as a bound on the associated type — so the compiler rejects an
-/// implementation whose type doesn't implement it — and as an `impl` on the opaque struct,
-/// which is therefore never more permissive than the implementation's own type. They must be
-/// written by their bare names; they always mean the `core` traits, so a trait of the same
-/// name in scope where `unitrait!` is invoked changes nothing, and no other bound (including
-/// lifetimes and `?Sized`) is accepted.
+/// The supported marker bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`,
+/// `Copy` and `Clone`, alongside the `Drop` bound described
+/// [above](#dropping-opaque-types). Each marker is emitted both as a bound on the associated
+/// type — so the compiler rejects an implementation whose type doesn't implement it — and as
+/// an `impl` on the opaque struct, which is therefore never more permissive than the
+/// implementation's own type. They must be written by their bare names; they always mean the
+/// `core` traits, so a trait of the same name in scope where `unitrait!` is invoked changes
+/// nothing, and no other bound (including lifetimes and `?Sized`) is accepted.
 ///
 /// `Copy` implies the implementation's associated type has no drop glue, so it is mutually
 /// exclusive with the `Drop` bound; the opaque struct couldn't implement both anyway.
-/// `Clone` is implemented alongside `Copy`.
+/// `Clone` is implemented alongside `Copy`, by copying the bytes.
+///
+/// `Clone` on its own is the one marker whose `impl` needs the implementation's help: the
+/// caller can't duplicate a value of a type it can't see. A `Clone` declaration must
+/// therefore carry a `#[clone_symbol = "..."]` attribute, and `<OpaqueType as
+/// Clone>::clone` dispatches through that symbol, which the implementation macro exports as
+/// a function cloning the implementation's value. `clone_from` is left at its default, so it
+/// goes through `clone` too. `Clone` is mutually exclusive with `Copy`, which already
+/// provides a (trivial) `Clone` impl.
 ///
 /// Not declaring a bound is what makes the other features sound. In particular, an opaque
 /// type without `Unpin` can only be placed behind a `Pin` by actually pinning it, which is
@@ -303,7 +312,8 @@ use syn::{
 /// functions cast it to the implementation's associated type (sound thanks to the size/align
 /// checks and the always-initialized invariant). For each opaque type with a `Drop` bound,
 /// the implementation macro additionally exports its drop symbol, as a function dropping the
-/// implementation's value in place; the opaque struct's `Drop` impl calls it.
+/// implementation's value in place; the opaque struct's `Drop` impl calls it. A `Clone` bound
+/// works the same way, with a function cloning the implementation's value.
 ///
 /// Because the contract between the two sides is just the symbol name and signature, crates
 /// may define and implement the unitrait through *different versions* of the defining crate
@@ -348,6 +358,9 @@ struct OpaqueDecl {
     /// attribute; otherwise the opaque struct has no drop glue and the implementation's
     /// associated type is required to have none either.
     drop_symbol: Option<LitStr>,
+    /// The symbol of the function cloning the value. `Some` exactly when the declaration
+    /// has a `Clone` bound, which also requires the `#[clone_symbol = "..."]` attribute.
+    clone_symbol: Option<LitStr>,
 }
 
 /// A marker trait that may be declared as a bound on an opaque associated type.
@@ -359,6 +372,7 @@ enum Marker {
     UnwindSafe,
     RefUnwindSafe,
     Copy,
+    Clone,
 }
 
 const MARKERS: &[(&str, Marker)] = &[
@@ -368,9 +382,10 @@ const MARKERS: &[(&str, Marker)] = &[
     ("UnwindSafe", Marker::UnwindSafe),
     ("RefUnwindSafe", Marker::RefUnwindSafe),
     ("Copy", Marker::Copy),
+    ("Clone", Marker::Clone),
 ];
 
-const BOUND_HELP: &str = "only `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy` and `Drop` are allowed as bounds on an opaque associated type, written by their bare names";
+const BOUND_HELP: &str = "only `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy`, `Clone` and `Drop` are allowed as bounds on an opaque associated type, written by their bare names";
 
 impl Marker {
     fn from_ident(ident: &Ident) -> Option<Marker> {
@@ -394,6 +409,7 @@ impl Marker {
             Marker::UnwindSafe => quote!(::core::panic::UnwindSafe),
             Marker::RefUnwindSafe => quote!(::core::panic::RefUnwindSafe),
             Marker::Copy => quote!(::core::marker::Copy),
+            Marker::Clone => quote!(::core::clone::Clone),
         }
     }
 }
@@ -406,6 +422,8 @@ struct Bounds {
     /// The span of the `Drop` bound, if written. Unlike the markers it is not a real trait
     /// bound: it declares that the opaque struct has drop glue.
     drop_bound: Option<Span>,
+    /// The span of the `Clone` marker, if written, for error reporting.
+    clone_bound: Option<Span>,
 }
 
 /// Parses the optional `: Send + Sync + Drop` bounds of an opaque associated type
@@ -413,10 +431,12 @@ struct Bounds {
 fn parse_bounds(input: ParseStream) -> syn::Result<Bounds> {
     let mut markers = vec![];
     let mut drop_bound = None;
+    let mut clone_bound = None;
     if !input.peek(Token![:]) {
         return Ok(Bounds {
             markers,
             drop_bound,
+            clone_bound,
         });
     }
     input.parse::<Token![:]>()?;
@@ -453,6 +473,9 @@ fn parse_bounds(input: ParseStream) -> syn::Result<Bounds> {
                 format!("duplicate `{}` bound", marker.name()),
             ));
         }
+        if marker == Marker::Clone {
+            clone_bound = Some(ident.span());
+        }
         markers.push(marker);
     }
     if let Some(span) = drop_bound
@@ -463,9 +486,18 @@ fn parse_bounds(input: ParseStream) -> syn::Result<Bounds> {
             "`Copy` and `Drop` are mutually exclusive: a `Copy` type never has drop glue",
         ));
     }
+    if let Some(span) = clone_bound
+        && markers.contains(&Marker::Copy)
+    {
+        return Err(syn::Error::new(
+            span,
+            "`Copy` and `Clone` are mutually exclusive: a `Copy` opaque type already implements `Clone` by copying its bytes",
+        ));
+    }
     Ok(Bounds {
         markers,
         drop_bound,
+        clone_bound,
     })
 }
 
@@ -483,6 +515,7 @@ struct SplitAttrs {
     docs: Vec<Attribute>,
     symbol: Option<LitStr>,
     drop_symbol: Option<LitStr>,
+    clone_symbol: Option<LitStr>,
     opaque: Option<(LitInt, LitInt)>,
 }
 
@@ -506,12 +539,14 @@ fn parse_str_attr(attr: &Attribute, name: &str) -> syn::Result<LitStr> {
     Ok(s.clone())
 }
 
-/// Splits attributes into doc comments, an optional `#[symbol = "..."]`, an optional
-/// `#[drop_symbol = "..."]`, and an optional `#[opaque(size = N, align = M)]`.
+/// Splits attributes into doc comments, an optional `#[symbol = "..."]`, optional
+/// `#[drop_symbol = "..."]` and `#[clone_symbol = "..."]`, and an optional
+/// `#[opaque(size = N, align = M)]`.
 fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
     let mut docs = vec![];
     let mut symbol = None;
     let mut drop_symbol = None;
+    let mut clone_symbol = None;
     let mut opaque = None;
     for attr in attrs {
         if attr.path().is_ident("doc") {
@@ -532,6 +567,14 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
                 ));
             }
             drop_symbol = Some(parse_str_attr(&attr, "drop_symbol")?);
+        } else if attr.path().is_ident("clone_symbol") {
+            if clone_symbol.is_some() {
+                return Err(syn::Error::new(
+                    attr.span(),
+                    "duplicate `#[clone_symbol]` attribute",
+                ));
+            }
+            clone_symbol = Some(parse_str_attr(&attr, "clone_symbol")?);
         } else if attr.path().is_ident("opaque") {
             if opaque.is_some() {
                 return Err(syn::Error::new(
@@ -562,7 +605,7 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
         } else {
             return Err(syn::Error::new(
                 attr.span(),
-                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]`, `#[drop_symbol = \"...\"]` or `#[opaque(size = N, align = M)]`",
+                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]`, `#[drop_symbol = \"...\"]`, `#[clone_symbol = \"...\"]` or `#[opaque(size = N, align = M)]`",
             ));
         }
     }
@@ -570,6 +613,7 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
         docs,
         symbol,
         drop_symbol,
+        clone_symbol,
         opaque,
     })
 }
@@ -604,6 +648,7 @@ impl Parse for UnitraitInput {
                 let Bounds {
                     markers,
                     drop_bound,
+                    clone_bound,
                 } = parse_bounds(&content)?;
                 if content.peek(Token![=]) {
                     return Err(content.error(format!(
@@ -615,6 +660,7 @@ impl Parse for UnitraitInput {
                     docs,
                     symbol,
                     drop_symbol,
+                    clone_symbol,
                     opaque,
                 } = split_attrs(attrs)?;
                 if let Some(symbol) = symbol {
@@ -640,6 +686,22 @@ impl Parse for UnitraitInput {
                         ));
                     }
                 }
+                // Same for `Clone`: the bound decides, the attribute names the symbol.
+                match (clone_bound, &clone_symbol) {
+                    (Some(_), Some(_)) | (None, None) => {}
+                    (Some(span), None) => {
+                        return Err(syn::Error::new(
+                            span,
+                            "an opaque associated type with a `Clone` bound requires a `#[clone_symbol = \"...\"]` attribute naming the extern symbol for cloning the value",
+                        ));
+                    }
+                    (None, Some(clone_symbol)) => {
+                        return Err(syn::Error::new(
+                            clone_symbol.span(),
+                            "an opaque associated type without a `Clone` bound can't be cloned, so it must not have a `#[clone_symbol = \"...\"]` attribute; add a `Clone` bound to give it one",
+                        ));
+                    }
+                }
                 let Some((size, align)) = opaque else {
                     return Err(syn::Error::new(
                         assoc.span(),
@@ -659,6 +721,7 @@ impl Parse for UnitraitInput {
                     align,
                     bounds: markers,
                     drop_symbol,
+                    clone_symbol,
                 });
             } else {
                 let unsafety: Option<Token![unsafe]> = content.parse()?;
@@ -695,6 +758,7 @@ impl Parse for UnitraitInput {
                     docs,
                     symbol,
                     drop_symbol,
+                    clone_symbol,
                     opaque,
                 } = split_attrs(attrs)?;
                 if opaque.is_some() {
@@ -707,6 +771,12 @@ impl Parse for UnitraitInput {
                     return Err(syn::Error::new(
                         drop_symbol.span(),
                         "`#[drop_symbol]` is only allowed on opaque associated type declarations",
+                    ));
+                }
+                if let Some(clone_symbol) = clone_symbol {
+                    return Err(syn::Error::new(
+                        clone_symbol.span(),
+                        "`#[clone_symbol]` is only allowed on opaque associated type declarations",
                     ));
                 }
                 let Some(symbol) = symbol else {
@@ -998,7 +1068,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
     ]);
     let trait_qpath = quote!(#path::#name);
 
-    // The opaque structs and their Drop impls (defining-crate side).
+    // The opaque structs and their trait impls (defining-crate side).
     let opaque_structs = opaques.iter().map(|o| {
         let OpaqueDecl {
             docs,
@@ -1008,6 +1078,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             align,
             bounds,
             drop_symbol,
+            clone_symbol,
             ..
         } = o;
         // One impl per declared bound. The trait requires the implementation's associated
@@ -1033,6 +1104,25 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                         }
                     }
                 },
+                // A `Clone` opaque value can only be duplicated by the implementation,
+                // which knows the real type, so `clone` dispatches through a symbol like
+                // any method. `clone_from` is left to its default, which goes through it.
+                // The `Clone` bound requires `#[clone_symbol]`, so the `unwrap` can't fire.
+                Marker::Clone => {
+                    let clone_symbol = clone_symbol.as_ref().unwrap();
+                    quote! {
+                        impl #path for #opaque {
+                            #[inline]
+                            fn clone(&self) -> Self {
+                                unsafe extern "Rust" {
+                                    #[link_name = #clone_symbol]
+                                    safe fn extern_fn(this: &#opaque) -> #opaque;
+                                }
+                                extern_fn(self)
+                            }
+                        }
+                    }
+                }
                 _ => quote!(impl #path for #opaque {}),
             }
         });
@@ -1165,9 +1255,10 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
-    // Compile-time checks and drop shims for the opaque types (implementation-macro side).
+    // Compile-time checks, and drop and clone shims, for the opaque types
+    // (implementation-macro side).
     let opaque_shims = opaques.iter().map(|o| {
-        let OpaqueDecl { assoc, opaque, size, align, drop_symbol, .. } = o;
+        let OpaqueDecl { assoc, opaque, size, align, drop_symbol, clone_symbol, .. } = o;
         let real = quote!(<#tvar as #trait_qpath>::#assoc);
         let qopaque = quote!(#path::#opaque);
         let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
@@ -1176,7 +1267,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         // Requiring the associated type to have no drop glue at all makes that a no-op
         // rather than a leak.
         let no_drop_check = drop_symbol.is_none().then(|| quote! {
-            assert!(
+            ::core::assert!(
                 !::core::mem::needs_drop::<#real>(),
                 "unitrait: the implementation's associated type needs drop, but the opaque associated type has no `Drop` bound",
             );
@@ -1197,6 +1288,27 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 }
             }
         });
+        let clone_fn = format_ident!("__unitrait_clone_{}", assoc.to_string().to_lowercase());
+        // Without a `Clone` bound the opaque struct has no `Clone` impl, so there's no
+        // clone function to export.
+        let clone_shim = clone_symbol.as_ref().map(|clone_symbol| {
+            quote! {
+                #[unsafe(export_name = #clone_symbol)]
+                fn #clone_fn(this: &#qopaque) -> #qopaque {
+                    // SAFETY: opaque values always hold an initialized value of the
+                    // implementation's associated type, and size and alignment are checked
+                    // at compile time, so the read is in bounds and aligned, and the write
+                    // stays within the opaque struct's uninit-tolerant bytes.
+                    unsafe {
+                        let this = &*(this as *const #qopaque as *const #real);
+                        let __unitrait_cloned: #real = ::core::clone::Clone::clone(this);
+                        let mut __unitrait_out = ::core::mem::MaybeUninit::<#qopaque>::uninit();
+                        (__unitrait_out.as_mut_ptr() as *mut #real).write(__unitrait_cloned);
+                        __unitrait_out.assume_init()
+                    }
+                }
+            }
+        });
         quote! {
             const _: () = {
                 ::core::assert!(
@@ -1211,6 +1323,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             };
 
             #drop_shim
+            #clone_shim
         }
     });
 

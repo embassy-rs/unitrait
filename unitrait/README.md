@@ -106,7 +106,10 @@ implementation:
 pub type Context: Send + Drop;
 ```
 
-`Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` are supported,
-alongside `Drop`; `Copy` and `Drop` are mutually exclusive.
+`Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy` and `Clone` are
+supported, alongside `Drop`. `Copy` is mutually exclusive with both `Clone` and
+`Drop`. Like `Drop`, `Clone` dispatches through a symbol of its own, named by a
+`#[clone_symbol = "..."]` attribute, since only the implementation can duplicate
+a value of a type the caller can't see.
 
 See the documentation of the `unitrait!` macro for the full details.

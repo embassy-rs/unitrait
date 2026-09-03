@@ -1,0 +1,5 @@
+error: duplicate `#[clone_symbol]` attribute
+ --> tests/ui/duplicate_clone_symbol_attr.rs:5:9
+  |
+5 |         #[clone_symbol = "_ui_dup_clone_symbol_b"]
+  |         ^

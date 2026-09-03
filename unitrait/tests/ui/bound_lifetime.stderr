@@ -1,4 +1,4 @@
-error: only `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy` and `Drop` are allowed as bounds on an opaque associated type, written by their bare names
+error: only `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy`, `Clone` and `Drop` are allowed as bounds on an opaque associated type, written by their bare names
  --> tests/ui/bound_lifetime.rs:5:27
   |
 5 |         pub type Context: 'static + Drop;

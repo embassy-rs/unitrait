@@ -1,0 +1,5 @@
+error: `#[clone_symbol]` is only allowed on opaque associated type declarations
+ --> tests/ui/method_with_clone_symbol.rs:3:26
+  |
+3 |         #[clone_symbol = "_ui_method_with_clone_symbol"]
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
