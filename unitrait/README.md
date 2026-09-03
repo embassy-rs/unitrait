@@ -65,8 +65,8 @@ unitrait::unitrait! {
     pub trait Hash {
         /// Opaque storage for the implementation's hash state.
         #[opaque(size = 128, align = 16)]
-        #[symbol = "_hash_context_drop"]
-        pub type Context;
+        #[drop_symbol = "_hash_context_drop"]
+        pub type Context: Drop;
 
         #[symbol = "_hash_init"]
         pub fn hash_init() -> Self::Context;
@@ -86,9 +86,13 @@ compile time that it fits. A trait may declare any number of opaque types, and
 methods may use each as `Self::Name`, `&Self::Name`, `&mut Self::Name`,
 `Pin<&Self::Name>` or `Pin<&mut Self::Name>` in any parameter, and return one
 by value. Opaque values are only obtainable from methods returning one, so they
-always hold initialized state — the free functions are safe, and dropping one
-drops the implementation's value in place, through the opaque type's own extern
-symbol.
+always hold initialized state — the free functions are safe.
+
+An opaque type with a `Drop` bound gets a `Drop` impl, which drops the
+implementation's value in place through the extern symbol named by its
+`#[drop_symbol = "..."]` attribute. One without has no drop glue at all, and the
+implementation macro checks at compile time that the implementation's associated
+type needs no dropping either.
 
 Since the caller can't see what type the implementation picked, an opaque type
 implements no auto trait by default. Marker traits are opted into by declaring
@@ -98,11 +102,11 @@ implementation:
 ```rust,ignore
 /// Sendable between threads, but not shareable.
 #[opaque(size = 128, align = 16)]
-#[symbol = "_hash_context_drop"]
-pub type Context: Send;
+#[drop_symbol = "_hash_context_drop"]
+pub type Context: Send + Drop;
 ```
 
-`Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` are supported;
-a `Copy` opaque type has no drop glue, and so needs no `#[symbol]`.
+`Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` are supported,
+alongside `Drop`; `Copy` and `Drop` are mutually exclusive.
 
 See the documentation of the `unitrait!` macro for the full details.

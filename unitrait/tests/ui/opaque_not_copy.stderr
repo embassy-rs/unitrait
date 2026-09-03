@@ -12,7 +12,7 @@ error[E0382]: use of moved value: `ctx`
 note: consider changing this parameter type in function `take` to borrow instead if owning the value isn't necessary
   --> tests/ui/opaque_not_copy.rs:5:18
    |
- 5 |         pub type Context;
+ 5 |         pub type Context: Drop;
    |                  ^^^^^^^ this parameter takes ownership of the value
 ...
 11 |         pub fn take(ctx: Self::Context);
@@ -23,8 +23,8 @@ note: if `FooContext` implemented `Clone`, you could clone the value
  1 | / unitrait::unitrait! {
  2 | |     pub trait Foo {
  3 | |         #[opaque(size = 8, align = 4)]
- 4 | |         #[symbol = "_ui_opaque_not_copy_drop"]
- 5 | |         pub type Context;
+ 4 | |         #[drop_symbol = "_ui_opaque_not_copy_drop"]
+ 5 | |         pub type Context: Drop;
    | |________________________^ consider implementing `Clone` for this type
 ...
 33 |       take(ctx);

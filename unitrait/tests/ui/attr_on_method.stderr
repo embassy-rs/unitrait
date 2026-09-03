@@ -1,4 +1,4 @@
-error: unexpected attribute; expected doc comments, `#[symbol = "..."]` or `#[opaque(size = N, align = M)]`
+error: unexpected attribute; expected doc comments, `#[symbol = "..."]`, `#[drop_symbol = "..."]` or `#[opaque(size = N, align = M)]`
  --> tests/ui/attr_on_method.rs:3:9
   |
 3 |         #[inline]

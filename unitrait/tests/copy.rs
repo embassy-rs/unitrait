@@ -3,7 +3,7 @@
 unitrait::unitrait! {
     /// A test trait handing out copyable opaque tokens.
     pub trait Tokens {
-        /// An opaque token. `Copy`, so it has no `#[symbol]` and is never dropped.
+        /// An opaque token. `Copy`, so it can't have a `Drop` bound and is never dropped.
         #[opaque(size = 8, align = 4)]
         pub type Token: Copy;
 

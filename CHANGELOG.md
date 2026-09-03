@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation's associated type implemented, which let safe code send a `!Send`
   implementation value across threads.
 - Added support for `Pin<&Self::Name>` and `Pin<&mut Self::Name>` method parameters.
+- Added the `Drop` bound on opaque associated types: `type Name: Send + Drop;`. It declares
+  that the opaque type has drop glue, and requires a `#[drop_symbol = "..."]` attribute
+  naming the symbol to drop through. It's mutually exclusive with `Copy`.
+- **Breaking**: an opaque associated type without a `Drop` bound now has no `Drop` impl, and
+  the implementation macro checks at compile time that the implementation's associated type
+  has no drop glue. Previously every non-`Copy` opaque type had drop glue.
+- **Breaking**: opaque associated types now name their drop symbol with
+  `#[drop_symbol = "..."]` instead of `#[symbol = "..."]`, which is now rejected on them.
+  `#[symbol = "..."]` keeps its meaning on methods, and is now the only place it's allowed.
 
 ## 1.1.0 - 2026-08-26
 

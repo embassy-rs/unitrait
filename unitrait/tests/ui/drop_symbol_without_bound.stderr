@@ -1,0 +1,5 @@
+error: an opaque associated type without a `Drop` bound has no drop glue, so it must not have a `#[drop_symbol = "..."]` attribute; add a `Drop` bound to give it one
+ --> tests/ui/drop_symbol_without_bound.rs:4:25
+  |
+4 |         #[drop_symbol = "_ui_drop_symbol_without_bound_drop"]
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

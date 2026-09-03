@@ -8,8 +8,8 @@ unitrait::unitrait! {
     pub trait Anchored {
         /// Opaque storage for the implementation's state.
         #[opaque(size = 32, align = 8)]
-        #[symbol = "_unitrait_test_anchored_drop"]
-        pub type State;
+        #[drop_symbol = "_unitrait_test_anchored_drop"]
+        pub type State: Drop;
 
         #[symbol = "_unitrait_test_anchored_new"]
         pub fn anchored_new(v: u32) -> Self::State;

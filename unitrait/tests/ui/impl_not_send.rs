@@ -3,8 +3,8 @@ use std::rc::Rc;
 unitrait::unitrait! {
     pub trait Foo {
         #[opaque(size = 16, align = 8)]
-        #[symbol = "_ui_impl_not_send_drop"]
-        pub type Context: Send;
+        #[drop_symbol = "_ui_impl_not_send_drop"]
+        pub type Context: Send + Drop;
 
         #[symbol = "_ui_impl_not_send_new"]
         pub fn new() -> Self::Context;

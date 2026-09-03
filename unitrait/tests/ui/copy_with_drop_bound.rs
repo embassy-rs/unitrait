@@ -1,10 +1,9 @@
 unitrait::unitrait! {
     pub trait Foo {
         #[opaque(size = 8, align = 4)]
-        #[drop_symbol = "_ui_type_equals_drop"]
-        pub type Context = FooContext;
+        pub type Context: Copy + Drop;
 
-        #[symbol = "_ui_type_equals_new"]
+        #[symbol = "_ui_copy_with_drop_bound_new"]
         pub fn new() -> Self::Context;
     }
 

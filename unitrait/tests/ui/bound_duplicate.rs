@@ -1,8 +1,8 @@
 unitrait::unitrait! {
     pub trait Foo {
         #[opaque(size = 8, align = 4)]
-        #[symbol = "_ui_bound_duplicate_drop"]
-        pub type Context: Send + Sync + Send;
+        #[drop_symbol = "_ui_bound_duplicate_drop"]
+        pub type Context: Send + Sync + Send + Drop;
 
         #[symbol = "_ui_bound_duplicate_new"]
         pub fn new() -> Self::Context;

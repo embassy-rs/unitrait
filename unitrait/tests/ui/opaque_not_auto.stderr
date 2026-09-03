@@ -14,7 +14,7 @@ note: required because it appears within the type `PhantomData<(*mut (), Phantom
 note: required because it appears within the type `FooContext`
   --> tests/ui/opaque_not_auto.rs:5:18
    |
- 5 |         pub type Context;
+ 5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_send`
   --> tests/ui/opaque_not_auto.rs:26:19
@@ -38,7 +38,7 @@ note: required because it appears within the type `PhantomData<(*mut (), Phantom
 note: required because it appears within the type `FooContext`
   --> tests/ui/opaque_not_auto.rs:5:18
    |
- 5 |         pub type Context;
+ 5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_sync`
   --> tests/ui/opaque_not_auto.rs:27:19
@@ -62,7 +62,7 @@ note: required because it appears within the type `PhantomData<(*mut (), Phantom
 note: required because it appears within the type `FooContext`
   --> tests/ui/opaque_not_auto.rs:5:18
    |
- 5 |         pub type Context;
+ 5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_sync`
   --> tests/ui/opaque_not_auto.rs:27:19
@@ -87,7 +87,7 @@ note: required because it appears within the type `PhantomData<(*mut (), Phantom
 note: required because it appears within the type `FooContext`
   --> tests/ui/opaque_not_auto.rs:5:18
    |
- 5 |         pub type Context;
+ 5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_unpin`
   --> tests/ui/opaque_not_auto.rs:28:20
@@ -112,7 +112,7 @@ note: required because it appears within the type `PhantomData<(*mut (), Phantom
 note: required because it appears within the type `FooContext`
   --> tests/ui/opaque_not_auto.rs:5:18
    |
- 5 |         pub type Context;
+ 5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_unwind_safe`
   --> tests/ui/opaque_not_auto.rs:29:26
@@ -136,7 +136,7 @@ note: required because it appears within the type `PhantomData<(*mut (), Phantom
 note: required because it appears within the type `FooContext`
   --> tests/ui/opaque_not_auto.rs:5:18
    |
- 5 |         pub type Context;
+ 5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_ref_unwind_safe`
   --> tests/ui/opaque_not_auto.rs:30:30

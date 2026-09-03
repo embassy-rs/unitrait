@@ -1,0 +1,5 @@
+error: duplicate `Drop` bound
+ --> tests/ui/bound_duplicate_drop.rs:5:34
+  |
+5 |         pub type Context: Drop + Drop;
+  |                                  ^^^^

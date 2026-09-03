@@ -1,8 +1,8 @@
 unitrait::unitrait! {
     pub trait Foo {
         #[opaque(size = 8, align = 4)]
-        #[symbol = "_ui_bound_unsupported_drop"]
-        pub type Context: Clone;
+        #[drop_symbol = "_ui_bound_unsupported_drop"]
+        pub type Context: Clone + Drop;
 
         #[symbol = "_ui_bound_unsupported_new"]
         pub fn new() -> Self::Context;

@@ -1,0 +1,5 @@
+error: expected a string literal
+ --> tests/ui/drop_symbol_not_string.rs:4:25
+  |
+4 |         #[drop_symbol = 42]
+  |                         ^^

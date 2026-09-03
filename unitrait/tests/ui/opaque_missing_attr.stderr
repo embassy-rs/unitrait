@@ -1,5 +1,5 @@
 error: opaque associated types require an `#[opaque(size = N, align = M)]` attribute
  --> tests/ui/opaque_missing_attr.rs:4:18
   |
-4 |         pub type Context;
+4 |         pub type Context: Drop;
   |                  ^^^^^^^

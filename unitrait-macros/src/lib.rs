@@ -93,8 +93,8 @@ use syn::{
 ///     pub trait Checksum {
 ///         /// Opaque storage for the implementation's checksum state.
 ///         #[opaque(size = 16, align = 8)]
-///         #[symbol = "_cksum_context_drop"]
-///         pub type Context;
+///         #[drop_symbol = "_cksum_context_drop"]
+///         pub type Context: Drop;
 ///
 ///         /// Returns a fresh checksum state.
 ///         #[symbol = "_cksum_init"]
@@ -129,9 +129,9 @@ use syn::{
 /// # }
 /// ```
 ///
-/// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] #[symbol = "..."] [vis] type Name[: Bounds];`, where `N` and
+/// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] [#[drop_symbol = "..."]] [vis] type Name[: Bounds];`, where `N` and
 /// `M` are integer literals and `Bounds` is described under [marker
-/// bounds](#marker-bounds-on-opaque-types). It emits:
+/// bounds](#marker-bounds-on-opaque-types) and [dropping](#dropping-opaque-types). It emits:
 ///
 /// - `type Name;` in the trait, with the declared bounds. The implementation sets it to a
 ///   type of its choosing, which must have size at most `N` and alignment at most `M`; the
@@ -144,9 +144,33 @@ use syn::{
 ///
 /// An opaque struct value always holds an initialized value of the implementation's
 /// (unknown to the caller) associated type: the only way to obtain one is through a method
-/// that returns it, and its `Drop` impl drops the implementation's value in place, through
-/// the extern symbol given by the `#[symbol = ...]` attribute on the declaration. This is
-/// why methods taking opaque types are safe.
+/// that returns it. This is why methods taking opaque types are safe.
+///
+/// # Dropping opaque types
+///
+/// The caller can't see the implementation's associated type, so it can't drop it either.
+/// Whether an opaque type has drop glue at all is declared by a `Drop` bound:
+///
+/// - **With** a `Drop` bound, the opaque struct gets a `Drop` impl, which drops the
+///   implementation's value in place through an extern symbol. Such a declaration must carry
+///   a `#[drop_symbol = "..."]` attribute naming that symbol. The implementation may pick an
+///   associated type that needs dropping, or one that doesn't.
+/// - **Without** one, the opaque struct has no `Drop` impl, dropping one does nothing, and
+///   the declaration must not carry a `#[drop_symbol = "..."]` attribute. The implementation
+///   macro checks at compile time that the implementation's associated type has no drop glue
+///   ([`core::mem::needs_drop`] is `false`), so nothing is silently leaked. That is stricter
+///   than the type having no `Drop` impl: it also rejects a type that merely *contains*
+///   something needing drop.
+///
+/// Leaving the `Drop` bound off is the right choice for plain-data contexts such as an index
+/// or a handle: it reserves no symbol name, and it keeps the opaque struct free of drop glue.
+///
+/// `Drop` is written like the [marker bounds](#marker-bounds-on-opaque-types) but isn't one:
+/// it is never emitted, neither as a bound on the associated type (implementations are free
+/// to pick a type that implements `Drop` or not) nor as an `impl` on the opaque struct
+/// (which gets its `Drop` impl from the drop symbol). It is mutually exclusive with `Copy`.
+/// Adding or removing it is an ABI-breaking change, since the two sides would then disagree
+/// on whether the drop symbol is exported and called.
 ///
 /// Methods may use `Self::Name` at the *top level* of any parameter and of the return type,
 /// in these forms:
@@ -180,8 +204,8 @@ use syn::{
 ///         /// Can be moved between threads, but not shared, and must not be moved once
 ///         /// it has been pinned.
 ///         #[opaque(size = 64, align = 8)]
-///         #[symbol = "_session_state_drop"]
-///         pub type State: Send;
+///         #[drop_symbol = "_session_state_drop"]
+///         pub type State: Send + Drop;
 ///
 ///         /// A plain copyable handle: no drop glue, and duplicating it is free.
 ///         #[opaque(size = 4, align = 4)]
@@ -207,17 +231,18 @@ use syn::{
 /// # fn main() { let s = session_open(); assert_eq!(core::mem::size_of_val(&session_id(&s)), 4); }
 /// ```
 ///
-/// The supported bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and
-/// `Copy`. Each one is emitted both as a bound on the associated type — so the compiler
-/// rejects an implementation whose type doesn't implement it — and as an `impl` on the
-/// opaque struct, which is therefore never more permissive than the implementation's own
-/// type. They must be written by their bare names; they always mean the `core` traits, so a
-/// trait of the same name in scope where `unitrait!` is invoked changes nothing, and no
-/// other bound (including lifetimes and `?Sized`) is accepted.
+/// The supported marker bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`
+/// and `Copy`, alongside the `Drop` bound described [above](#dropping-opaque-types). Each
+/// marker is emitted both as a bound on the associated type — so the compiler rejects an
+/// implementation whose type doesn't implement it — and as an `impl` on the opaque struct,
+/// which is therefore never more permissive than the implementation's own type. They must be
+/// written by their bare names; they always mean the `core` traits, so a trait of the same
+/// name in scope where `unitrait!` is invoked changes nothing, and no other bound (including
+/// lifetimes and `?Sized`) is accepted.
 ///
-/// `Copy` additionally means the opaque struct has no drop glue: no `Drop` impl is emitted
-/// for it, and the declaration must not carry a `#[symbol = "..."]` attribute, since there
-/// is no drop function to export. `Clone` is implemented alongside `Copy`.
+/// `Copy` implies the implementation's associated type has no drop glue, so it is mutually
+/// exclusive with the `Drop` bound; the opaque struct couldn't implement both anyway.
+/// `Clone` is implemented alongside `Copy`.
 ///
 /// Not declaring a bound is what makes the other features sound. In particular, an opaque
 /// type without `Unpin` can only be placed behind a `Pin` by actually pinning it, which is
@@ -276,17 +301,17 @@ use syn::{
 ///
 /// For opaque associated types, both sides of the symbol pass the opaque struct; the exported
 /// functions cast it to the implementation's associated type (sound thanks to the size/align
-/// checks and the always-initialized invariant). The implementation macro additionally exports
-/// each opaque type's drop symbol, whose function drops the implementation's value in place;
-/// the opaque struct's `Drop` impl calls it.
+/// checks and the always-initialized invariant). For each opaque type with a `Drop` bound,
+/// the implementation macro additionally exports its drop symbol, as a function dropping the
+/// implementation's value in place; the opaque struct's `Drop` impl calls it.
 ///
 /// Because the contract between the two sides is just the symbol name and signature, crates
 /// may define and implement the unitrait through *different versions* of the defining crate
 /// (as happens during major-version transitions of the defining crate) and still link
 /// correctly, as long as the symbol names and signatures match. For opaque types, the size
 /// and alignment are part of that ABI contract too: shrinking either is ABI-breaking, and
-/// so is changing the declared marker bounds, since the two sides would then disagree on
-/// what the opaque struct implements.
+/// so is changing the declared bounds, since the two sides would then disagree on what the
+/// opaque struct implements and on whether it is dropped through a symbol.
 #[proc_macro]
 pub fn unitrait(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as UnitraitInput);
@@ -315,10 +340,13 @@ struct OpaqueDecl {
     opaque: Ident,
     size: LitInt,
     align: LitInt,
-    /// The marker traits declared as bounds on the associated type.
+    /// The marker traits declared as bounds on the associated type. The `Drop` bound is not
+    /// one of them: it's recorded by `drop_symbol` instead.
     bounds: Vec<Marker>,
-    /// The symbol of the function dropping the value in place. `None` for `Copy` opaque
-    /// types, which have no drop glue.
+    /// The symbol of the function dropping the value in place. `Some` exactly when the
+    /// declaration has a `Drop` bound, which also requires the `#[drop_symbol = "..."]`
+    /// attribute; otherwise the opaque struct has no drop glue and the implementation's
+    /// associated type is required to have none either.
     drop_symbol: Option<LitStr>,
 }
 
@@ -342,7 +370,7 @@ const MARKERS: &[(&str, Marker)] = &[
     ("Copy", Marker::Copy),
 ];
 
-const BOUND_HELP: &str = "only the marker traits `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` are allowed as bounds on an opaque associated type, written by their bare names";
+const BOUND_HELP: &str = "only `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy` and `Drop` are allowed as bounds on an opaque associated type, written by their bare names";
 
 impl Marker {
     fn from_ident(ident: &Ident) -> Option<Marker> {
@@ -370,11 +398,26 @@ impl Marker {
     }
 }
 
-/// Parses the optional `: Send + Sync` bounds of an opaque associated type declaration.
-fn parse_bounds(input: ParseStream) -> syn::Result<Vec<Marker>> {
-    let mut bounds = vec![];
+/// The parsed `: Send + Sync + Drop` bounds of an opaque associated type declaration.
+struct Bounds {
+    /// The marker traits, which are emitted both as bounds on the associated type and as
+    /// `impl`s on the opaque struct.
+    markers: Vec<Marker>,
+    /// The span of the `Drop` bound, if written. Unlike the markers it is not a real trait
+    /// bound: it declares that the opaque struct has drop glue.
+    drop_bound: Option<Span>,
+}
+
+/// Parses the optional `: Send + Sync + Drop` bounds of an opaque associated type
+/// declaration.
+fn parse_bounds(input: ParseStream) -> syn::Result<Bounds> {
+    let mut markers = vec![];
+    let mut drop_bound = None;
     if !input.peek(Token![:]) {
-        return Ok(bounds);
+        return Ok(Bounds {
+            markers,
+            drop_bound,
+        });
     }
     input.parse::<Token![:]>()?;
     let parsed = Punctuated::<TypeParamBound, Token![+]>::parse_separated_nonempty(input)?;
@@ -391,18 +434,39 @@ fn parse_bounds(input: ParseStream) -> syn::Result<Vec<Marker>> {
             return Err(syn::Error::new(bound.span(), BOUND_HELP));
         }
         let ident = &t.path.segments[0].ident;
+        // `Drop` is accepted where a bound goes, but it isn't one: it's never emitted, on
+        // the associated type or on the opaque struct. It only says the opaque struct has
+        // drop glue, and therefore that the implementation's type may need dropping.
+        if ident == "Drop" {
+            if drop_bound.is_some() {
+                return Err(syn::Error::new(ident.span(), "duplicate `Drop` bound"));
+            }
+            drop_bound = Some(ident.span());
+            continue;
+        }
         let Some(marker) = Marker::from_ident(ident) else {
             return Err(syn::Error::new(ident.span(), BOUND_HELP));
         };
-        if bounds.contains(&marker) {
+        if markers.contains(&marker) {
             return Err(syn::Error::new(
                 ident.span(),
                 format!("duplicate `{}` bound", marker.name()),
             ));
         }
-        bounds.push(marker);
+        markers.push(marker);
     }
-    Ok(bounds)
+    if let Some(span) = drop_bound
+        && markers.contains(&Marker::Copy)
+    {
+        return Err(syn::Error::new(
+            span,
+            "`Copy` and `Drop` are mutually exclusive: a `Copy` type never has drop glue",
+        ));
+    }
+    Ok(Bounds {
+        markers,
+        drop_bound,
+    })
 }
 
 struct Method {
@@ -415,13 +479,39 @@ struct Method {
     ret: Option<Type>,
 }
 
-type SplitAttrs = (Vec<Attribute>, Option<LitStr>, Option<(LitInt, LitInt)>);
+struct SplitAttrs {
+    docs: Vec<Attribute>,
+    symbol: Option<LitStr>,
+    drop_symbol: Option<LitStr>,
+    opaque: Option<(LitInt, LitInt)>,
+}
 
-/// Splits attributes into doc comments, an optional `#[symbol = "..."]`, and an optional
-/// `#[opaque(size = N, align = M)]`.
+/// Parses the string literal of a `#[name = "..."]` attribute.
+fn parse_str_attr(attr: &Attribute, name: &str) -> syn::Result<LitStr> {
+    let syn::Meta::NameValue(nv) = &attr.meta else {
+        return Err(syn::Error::new(
+            attr.span(),
+            format!("expected `#[{name} = \"...\"]`"),
+        ));
+    };
+    let Expr::Lit(l) = &nv.value else {
+        return Err(syn::Error::new(
+            nv.value.span(),
+            "expected a string literal",
+        ));
+    };
+    let Lit::Str(s) = &l.lit else {
+        return Err(syn::Error::new(l.span(), "expected a string literal"));
+    };
+    Ok(s.clone())
+}
+
+/// Splits attributes into doc comments, an optional `#[symbol = "..."]`, an optional
+/// `#[drop_symbol = "..."]`, and an optional `#[opaque(size = N, align = M)]`.
 fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
     let mut docs = vec![];
     let mut symbol = None;
+    let mut drop_symbol = None;
     let mut opaque = None;
     for attr in attrs {
         if attr.path().is_ident("doc") {
@@ -433,22 +523,15 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
                     "duplicate `#[symbol]` attribute",
                 ));
             }
-            let syn::Meta::NameValue(nv) = &attr.meta else {
+            symbol = Some(parse_str_attr(&attr, "symbol")?);
+        } else if attr.path().is_ident("drop_symbol") {
+            if drop_symbol.is_some() {
                 return Err(syn::Error::new(
                     attr.span(),
-                    "expected `#[symbol = \"...\"]`",
+                    "duplicate `#[drop_symbol]` attribute",
                 ));
-            };
-            let Expr::Lit(l) = &nv.value else {
-                return Err(syn::Error::new(
-                    nv.value.span(),
-                    "expected a string literal",
-                ));
-            };
-            let Lit::Str(s) = &l.lit else {
-                return Err(syn::Error::new(l.span(), "expected a string literal"));
-            };
-            symbol = Some(s.clone());
+            }
+            drop_symbol = Some(parse_str_attr(&attr, "drop_symbol")?);
         } else if attr.path().is_ident("opaque") {
             if opaque.is_some() {
                 return Err(syn::Error::new(
@@ -479,11 +562,16 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
         } else {
             return Err(syn::Error::new(
                 attr.span(),
-                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]` or `#[opaque(size = N, align = M)]`",
+                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]`, `#[drop_symbol = \"...\"]` or `#[opaque(size = N, align = M)]`",
             ));
         }
     }
-    Ok((docs, symbol, opaque))
+    Ok(SplitAttrs {
+        docs,
+        symbol,
+        drop_symbol,
+        opaque,
+    })
 }
 
 fn only_docs(attrs: Vec<Attribute>) -> syn::Result<Vec<Attribute>> {
@@ -513,30 +601,45 @@ impl Parse for UnitraitInput {
             if content.peek(Token![type]) {
                 content.parse::<Token![type]>()?;
                 let assoc: Ident = content.parse()?;
-                let bounds = parse_bounds(&content)?;
+                let Bounds {
+                    markers,
+                    drop_bound,
+                } = parse_bounds(&content)?;
                 if content.peek(Token![=]) {
                     return Err(content.error(format!(
                         "the opaque type's name is derived automatically as `{name}{assoc}` (trait name + associated type name); remove the `= ...`"
                     )));
                 }
                 content.parse::<Token![;]>()?;
-                let (docs, symbol, opaque) = split_attrs(attrs)?;
-                let drop_symbol = match (symbol, bounds.contains(&Marker::Copy)) {
-                    (symbol @ Some(_), false) => symbol,
-                    (None, true) => None,
-                    (None, false) => {
+                let SplitAttrs {
+                    docs,
+                    symbol,
+                    drop_symbol,
+                    opaque,
+                } = split_attrs(attrs)?;
+                if let Some(symbol) = symbol {
+                    return Err(syn::Error::new(
+                        symbol.span(),
+                        "opaque associated types name their drop symbol with `#[drop_symbol = \"...\"]`; `#[symbol = \"...\"]` is only allowed on methods",
+                    ));
+                }
+                // The `Drop` bound decides whether the opaque struct has drop glue; the
+                // attribute only names the symbol to drop through. The two must agree.
+                match (drop_bound, &drop_symbol) {
+                    (Some(_), Some(_)) | (None, None) => {}
+                    (Some(span), None) => {
                         return Err(syn::Error::new(
-                            assoc.span(),
-                            "opaque associated types require a `#[symbol = \"...\"]` attribute naming the extern symbol for dropping the value in place",
+                            span,
+                            "an opaque associated type with a `Drop` bound requires a `#[drop_symbol = \"...\"]` attribute naming the extern symbol for dropping the value in place",
                         ));
                     }
-                    (Some(symbol), true) => {
+                    (None, Some(drop_symbol)) => {
                         return Err(syn::Error::new(
-                            symbol.span(),
-                            "`Copy` opaque associated types have no drop glue, so they must not have a `#[symbol = \"...\"]` attribute",
+                            drop_symbol.span(),
+                            "an opaque associated type without a `Drop` bound has no drop glue, so it must not have a `#[drop_symbol = \"...\"]` attribute; add a `Drop` bound to give it one",
                         ));
                     }
-                };
+                }
                 let Some((size, align)) = opaque else {
                     return Err(syn::Error::new(
                         assoc.span(),
@@ -554,7 +657,7 @@ impl Parse for UnitraitInput {
                     opaque,
                     size,
                     align,
-                    bounds,
+                    bounds: markers,
                     drop_symbol,
                 });
             } else {
@@ -588,11 +691,22 @@ impl Parse for UnitraitInput {
                     None
                 };
                 content.parse::<Token![;]>()?;
-                let (docs, symbol, opaque) = split_attrs(attrs)?;
+                let SplitAttrs {
+                    docs,
+                    symbol,
+                    drop_symbol,
+                    opaque,
+                } = split_attrs(attrs)?;
                 if opaque.is_some() {
                     return Err(syn::Error::new(
                         fname.span(),
                         "`#[opaque]` is only allowed on associated type declarations",
+                    ));
+                }
+                if let Some(drop_symbol) = drop_symbol {
+                    return Err(syn::Error::new(
+                        drop_symbol.span(),
+                        "`#[drop_symbol]` is only allowed on opaque associated type declarations",
                     ));
                 }
                 let Some(symbol) = symbol else {
@@ -906,9 +1020,9 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 // SAFETY: an opaque value holds a value of the implementation's associated
                 // type, which the trait bound requires to be `Send`/`Sync`.
                 Marker::Send | Marker::Sync => quote!(unsafe impl #path for #opaque {}),
-                // A `Copy` associated type has no drop glue, so no `Drop` impl is emitted
-                // for the opaque struct and duplicating its bytes duplicates a value the
-                // implementation itself declared trivially copyable.
+                // `Copy` and `Drop` are mutually exclusive bounds, so no `Drop` impl is
+                // emitted for the opaque struct, and duplicating its bytes duplicates a
+                // value the implementation itself declared trivially copyable.
                 Marker::Copy => quote! {
                     impl #path for #opaque {}
 
@@ -1057,7 +1171,17 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         let real = quote!(<#tvar as #trait_qpath>::#assoc);
         let qopaque = quote!(#path::#opaque);
         let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
-        // `Copy` opaque types have no `Drop` impl, so there's nothing to export.
+        // Without a `Drop` bound the opaque struct has no `Drop` impl and its bytes are
+        // plain `MaybeUninit`, so nothing would ever drop the implementation's value.
+        // Requiring the associated type to have no drop glue at all makes that a no-op
+        // rather than a leak.
+        let no_drop_check = drop_symbol.is_none().then(|| quote! {
+            assert!(
+                !::core::mem::needs_drop::<#real>(),
+                "unitrait: the implementation's associated type needs drop, but the opaque associated type has no `Drop` bound",
+            );
+        });
+        // Without a `Drop` bound there's no drop function to export.
         let drop_shim = drop_symbol.as_ref().map(|drop_symbol| {
             quote! {
                 #[unsafe(export_name = #drop_symbol)]
@@ -1083,6 +1207,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                     ::core::mem::align_of::<#real>() <= #align,
                     "unitrait: the implementation's associated type requires stricter alignment than its declared opaque alignment",
                 );
+                #no_drop_check
             };
 
             #drop_shim

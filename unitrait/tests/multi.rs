@@ -8,13 +8,13 @@ unitrait::unitrait! {
     pub trait Codec {
         /// Opaque encoder state.
         #[opaque(size = 16, align = 8)]
-        #[symbol = "_unitrait_test_codec_encoder_drop"]
-        pub type Encoder;
+        #[drop_symbol = "_unitrait_test_codec_encoder_drop"]
+        pub type Encoder: Drop;
 
         /// Opaque decoder state.
         #[opaque(size = 16, align = 8)]
-        #[symbol = "_unitrait_test_codec_decoder_drop"]
-        pub type Decoder;
+        #[drop_symbol = "_unitrait_test_codec_decoder_drop"]
+        pub type Decoder: Drop;
 
         /// Returns a fresh encoder adding `shift` to every byte.
         #[symbol = "_unitrait_test_codec_encoder_new"]

@@ -1,5 +1,5 @@
-error: only the marker traits `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` are allowed as bounds on an opaque associated type, written by their bare names
+error: only `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy` and `Drop` are allowed as bounds on an opaque associated type, written by their bare names
  --> tests/ui/bound_unsupported.rs:5:27
   |
-5 |         pub type Context: Clone;
+5 |         pub type Context: Clone + Drop;
   |                           ^^^^^

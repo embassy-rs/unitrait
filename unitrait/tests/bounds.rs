@@ -7,18 +7,18 @@ unitrait::unitrait! {
     pub trait Marked {
         /// No bounds: the opaque type implements no auto trait.
         #[opaque(size = 8, align = 8)]
-        #[symbol = "_unitrait_test_marked_bare_drop"]
-        pub type Bare;
+        #[drop_symbol = "_unitrait_test_marked_bare_drop"]
+        pub type Bare: Drop;
 
         /// Every supported auto trait.
         #[opaque(size = 16, align = 8)]
-        #[symbol = "_unitrait_test_marked_all_drop"]
-        pub type All: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe;
+        #[drop_symbol = "_unitrait_test_marked_all_drop"]
+        pub type All: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe + Drop;
 
         /// Only `Send`, so it can be moved to another thread but not shared.
         #[opaque(size = 8, align = 8)]
-        #[symbol = "_unitrait_test_marked_owned_drop"]
-        pub type Owned: Send;
+        #[drop_symbol = "_unitrait_test_marked_owned_drop"]
+        pub type Owned: Send + Drop;
 
         #[symbol = "_unitrait_test_marked_bare_new"]
         pub fn bare_new() -> Self::Bare;

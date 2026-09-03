@@ -14,8 +14,8 @@ unitrait::unitrait! {
 
         /// Opaque storage for the counter state.
         #[opaque(size = 8, align = 4)]
-        #[symbol = "_unitrait_test_order_drop"]
-        pub type State;
+        #[drop_symbol = "_unitrait_test_order_drop"]
+        pub type State: Drop;
 
         /// Reads the counter without modifying it.
         #[symbol = "_unitrait_test_order_get"]

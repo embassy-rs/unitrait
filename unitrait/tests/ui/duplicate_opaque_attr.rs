@@ -2,8 +2,8 @@ unitrait::unitrait! {
     pub trait Foo {
         #[opaque(size = 8, align = 4)]
         #[opaque(size = 16, align = 8)]
-        #[symbol = "_ui_dup_opaque_drop"]
-        pub type Context;
+        #[drop_symbol = "_ui_dup_opaque_drop"]
+        pub type Context: Drop;
 
         #[symbol = "_ui_dup_opaque_new"]
         pub fn new() -> Self::Context;

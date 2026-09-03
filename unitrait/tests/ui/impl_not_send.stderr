@@ -11,7 +11,7 @@ note: required by a bound in `Foo::Context`
  3 | / unitrait::unitrait! {
  4 | |     pub trait Foo {
  5 | |         #[opaque(size = 16, align = 8)]
- 6 | |         #[symbol = "_ui_impl_not_send_drop"]
+ 6 | |         #[drop_symbol = "_ui_impl_not_send_drop"]
 ...  |
 13 | |     macro foo_impl(path = $crate);
 14 | | }

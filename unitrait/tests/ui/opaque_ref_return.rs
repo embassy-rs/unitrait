@@ -1,8 +1,8 @@
 unitrait::unitrait! {
     pub trait Foo {
         #[opaque(size = 8, align = 4)]
-        #[symbol = "_ui_ref_return_drop"]
-        pub type Context;
+        #[drop_symbol = "_ui_ref_return_drop"]
+        pub type Context: Drop;
 
         #[symbol = "_ui_ref_return_get"]
         pub fn get() -> &Self::Context;

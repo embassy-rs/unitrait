@@ -5,8 +5,8 @@ unitrait::unitrait! {
     pub trait Accumulator {
         /// Opaque storage for the accumulator state.
         #[opaque(size = 32, align = 8)]
-        #[symbol = "_unitrait_test_acc_drop"]
-        pub type Context;
+        #[drop_symbol = "_unitrait_test_acc_drop"]
+        pub type Context: Drop;
 
         /// Returns a fresh accumulator seeded with `seed`.
         #[symbol = "_unitrait_test_acc_init"]

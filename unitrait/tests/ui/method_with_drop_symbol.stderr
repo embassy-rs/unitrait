@@ -1,0 +1,5 @@
+error: `#[drop_symbol]` is only allowed on opaque associated type declarations
+ --> tests/ui/method_with_drop_symbol.rs:3:25
+  |
+3 |         #[drop_symbol = "_ui_method_with_drop_symbol"]
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

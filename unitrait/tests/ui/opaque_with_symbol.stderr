@@ -1,0 +1,5 @@
+error: opaque associated types name their drop symbol with `#[drop_symbol = "..."]`; `#[symbol = "..."]` is only allowed on methods
+ --> tests/ui/opaque_with_symbol.rs:4:20
+  |
+4 |         #[symbol = "_ui_opaque_with_symbol_drop"]
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

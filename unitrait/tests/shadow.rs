@@ -36,8 +36,8 @@ unitrait::unitrait! {
     pub trait Shadowed {
         /// An opaque type with every marker bound, in a scope where they're all shadowed.
         #[opaque(size = 16, align = 8)]
-        #[symbol = "_unitrait_test_shadow_ctx_drop"]
-        pub type Context: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe;
+        #[drop_symbol = "_unitrait_test_shadow_ctx_drop"]
+        pub type Context: Send + Sync + Unpin + UnwindSafe + RefUnwindSafe + Drop;
 
         /// A `Copy` opaque type, in a scope where `Copy` and `Clone` are shadowed.
         #[opaque(size = 4, align = 4)]

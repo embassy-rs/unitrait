@@ -1,0 +1,5 @@
+error: `Copy` and `Drop` are mutually exclusive: a `Copy` type never has drop glue
+ --> tests/ui/copy_with_drop_bound.rs:4:34
+  |
+4 |         pub type Context: Copy + Drop;
+  |                                  ^^^^
