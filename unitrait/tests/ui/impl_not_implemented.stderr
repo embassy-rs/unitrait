@@ -19,4 +19,9 @@ help: the trait `FooDriver` is implemented for `Foo`
 ...  |
  7 | |     pub struct Foo;
    | |__________________^
+note: required by a bound in `__FooImplementation::Type`
+  --> tests/ui/impl_not_implemented.rs:2:15
+   |
+ 2 |     pub trait FooDriver {
+   |               ^^^^^^^^^ required by this bound in `__FooImplementation::Type`
    = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)

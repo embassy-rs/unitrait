@@ -8,9 +8,26 @@ error[E0080]: evaluation panicked: unitrait: the implementation's associated typ
 ...  |
 13 | |     macro foo_impl(path = $crate);
 14 | | }
-   | |_^ evaluation of `_::_` failed here
+   | |_^ evaluation of `_::_::__UnitraitShims::<_::__UnitraitTag>::CHECKS` failed here
 ...
 26 |   foo_impl!(MyImpl);
    |   ----------------- in this macro invocation
    |
    = note: this error originates in the macro `$crate::panic::panic_2021` which comes from the expansion of the macro `foo_impl` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/impl_too_big.rs:1:1
+   |
+ 1 | / unitrait::unitrait! {
+ 2 | |     pub trait FooDriver {
+ 3 | |         #[opaque(size = 8, align = 4)]
+ 4 | |         #[drop_symbol = "_ui_impl_too_big_drop"]
+...  |
+13 | |     macro foo_impl(path = $crate);
+14 | | }
+   | |_^
+...
+26 |   foo_impl!(MyImpl);
+   |   ----------------- in this macro invocation
+   |
+   = note: this note originates in the macro `foo_impl` (in Nightly builds, run with -Z macro-backtrace for more info)

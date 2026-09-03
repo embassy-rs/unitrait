@@ -414,10 +414,9 @@ use syn::{
 ///   named unqualified (like `Item` in the example above). If the type is defined elsewhere,
 ///   re-export it with `pub use`.
 ///
-/// Because of that `use PATH::*;` glob, if the type passed to the implementation macro has the
-/// same name as a public item of the defining module (e.g. a driver struct named exactly like
-/// the trait), the bare name is ambiguous inside the macro expansion. Qualify it to disambiguate:
-/// `some_driver_impl!(self::Driver)`.
+/// That glob is confined to the shims: the type passed to the implementation macro is
+/// resolved in the caller's own scope, so it may share its name with a public item of the
+/// defining module (the dispatch type, say) without being confused with it.
 ///
 /// # Linkage details
 ///
@@ -1374,6 +1373,11 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         TokenTree::Ident(Ident::new("t", Span::call_site())),
     ]);
     let trait_qpath = quote!(#path::#name);
+    // The hidden trait binding the implementor's type, and the projection the shims refer to
+    // it by, generic over `__B`, the type bound through the trait. See the emitted macro.
+    let binding = format_ident!("__{dispatch}Implementation");
+    let timpl = quote!(<__B as #path::#binding>::Type);
+    let shims = quote!(__UnitraitShims::<__UnitraitTag>);
 
     // The opaque structs and their trait impls (defining-crate side).
     let opaque_structs = opaques.iter().map(|o| {
@@ -1657,13 +1661,26 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
-    // Compile-time checks, and drop and clone shims, for the opaque types
-    // (implementation-macro side).
-    let opaque_shims = opaques.iter().map(|o| {
-        let OpaqueDecl { assoc, opaque, drop_symbol, clone_symbol, .. } = o;
-        let real = quote!(<#tvar as #trait_qpath>::#assoc);
+    // The implementation-macro side. Everything that names the implementor's type is a
+    // generic helper on `__UnitraitShims<__B>`, bounded on the binding trait: it type-checks
+    // from the item bound `Type: Trait` alone, so a type that doesn't implement the trait is
+    // reported exactly once, where it's bound. Exported wrappers instantiate the helpers with
+    // the caller's tag. `checks` are compile-time assertions, evaluated through a const of
+    // the helper; `helpers` go in its `impl`; `exports` are the extern symbols.
+    let mut checks = vec![];
+    let mut helpers = vec![];
+    let mut exports = vec![];
+
+    for o in opaques {
+        let OpaqueDecl {
+            assoc,
+            opaque,
+            drop_symbol,
+            clone_symbol,
+            ..
+        } = o;
+        let real = quote!(<#timpl as #trait_qpath>::#assoc);
         let qopaque = quote!(#path::#opaque);
-        let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
         // Without a `Drop` bound the opaque struct has no `Drop` impl and its bytes are
         // plain `MaybeUninit`, so nothing would ever drop the implementation's value.
         // Requiring the associated type to have no drop glue at all makes that a no-op
@@ -1674,10 +1691,26 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 "unitrait: the implementation's associated type needs drop, but the opaque associated type has no `Drop` bound",
             );
         });
+        // The declared size and alignment may depend on `cfg`s of the defining crate, which
+        // can't be evaluated here, so the checks read them off the opaque struct instead.
+        // Its storage covers the whole struct (see `OpaqueLayout::padded_size`), so the
+        // implementation's value may use all of it.
+        checks.push(quote! {
+            ::core::assert!(
+                ::core::mem::size_of::<#real>() <= ::core::mem::size_of::<#qopaque>(),
+                "unitrait: the implementation's associated type is larger than its declared opaque size",
+            );
+            ::core::assert!(
+                ::core::mem::align_of::<#real>() <= ::core::mem::align_of::<#qopaque>(),
+                "unitrait: the implementation's associated type requires stricter alignment than its declared opaque alignment",
+            );
+            #no_drop_check
+        });
         // Without a `Drop` bound there's no drop function to export.
-        let drop_shim = drop_symbol.as_ref().map(|drop_symbol| {
-            quote! {
-                #[unsafe(export_name = #drop_symbol)]
+        if let Some(drop_symbol) = drop_symbol {
+            let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
+            helpers.push(quote! {
+                #[inline(always)]
                 fn #drop_fn(this: &mut #qopaque) {
                     // SAFETY: opaque values always hold an initialized value of the
                     // implementation's associated type (they can only be obtained from
@@ -1688,14 +1721,20 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                         ::core::ptr::drop_in_place(this as *mut #qopaque as *mut #real);
                     }
                 }
-            }
-        });
-        let clone_fn = format_ident!("__unitrait_clone_{}", assoc.to_string().to_lowercase());
+            });
+            exports.push(quote! {
+                #[unsafe(export_name = #drop_symbol)]
+                fn #drop_fn(this: &mut #qopaque) {
+                    #shims::#drop_fn(this)
+                }
+            });
+        }
         // Without a `Clone` bound the opaque struct has no `Clone` impl, so there's no
         // clone function to export.
-        let clone_shim = clone_symbol.as_ref().map(|clone_symbol| {
-            quote! {
-                #[unsafe(export_name = #clone_symbol)]
+        if let Some(clone_symbol) = clone_symbol {
+            let clone_fn = format_ident!("__unitrait_clone_{}", assoc.to_string().to_lowercase());
+            helpers.push(quote! {
+                #[inline(always)]
                 fn #clone_fn(this: &#qopaque) -> #qopaque {
                     // SAFETY: opaque values always hold an initialized value of the
                     // implementation's associated type, and size and alignment are checked
@@ -1709,155 +1748,153 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                         __unitrait_out.assume_init()
                     }
                 }
-            }
-        });
-        // The declared size and alignment may depend on `cfg`s of the defining crate, which
-        // can't be evaluated here, so the checks read them off the opaque struct instead.
-        // Its storage covers the whole struct (see `OpaqueLayout::padded_size`), so the
-        // implementation's value may use all of it.
-        quote! {
-            const _: () = {
-                ::core::assert!(
-                    ::core::mem::size_of::<#real>() <= ::core::mem::size_of::<#qopaque>(),
-                    "unitrait: the implementation's associated type is larger than its declared opaque size",
-                );
-                ::core::assert!(
-                    ::core::mem::align_of::<#real>() <= ::core::mem::align_of::<#qopaque>(),
-                    "unitrait: the implementation's associated type requires stricter alignment than its declared opaque alignment",
-                );
-                #no_drop_check
-            };
-
-            #drop_shim
-            #clone_shim
-        }
-    });
-
-    // The method shims (implementation-macro side).
-    let method_shims = methods
-        .iter()
-        .map(|m| {
-            let Method { unsafety, name, symbol, args, ret, .. } = m;
-            let slots = args.iter().map(|(_, ty)| input.classify(ty)).collect::<syn::Result<Vec<_>>>()?;
-            let params = args
-                .iter()
-                .zip(&slots)
-                .map(|((id, ty), slot)| {
-                    let ity = input.impl_ty(ty, slot);
-                    quote!(#id: #ity)
-                })
-                .collect::<Vec<_>>();
-            // Convert opaque parameters to the implementation's associated type.
-            let convs = args.iter().zip(&slots).filter_map(|((id, _), slot)| {
-                let real = |i: &usize| {
-                    let assoc = &input.opaques[*i].assoc;
-                    quote!(<#tvar as #trait_qpath>::#assoc)
-                };
-                let qopaque = |i: &usize| {
-                    let op = &input.opaques[*i].opaque;
-                    quote!(#path::#op)
-                };
-                match slot {
-                    Slot::Plain => None,
-                    // SAFETY (all three): opaque values always hold an initialized value of
-                    // the implementation's associated type, and size and alignment are
-                    // checked at compile time. The by-value case takes ownership, so the
-                    // opaque's own Drop must not run: ManuallyDrop suppresses it and the
-                    // value is moved out by reading it as the real type.
-                    Slot::Value(i) => {
-                        let (real, qopaque) = (real(i), qopaque(i));
-                        Some(quote! {
-                            let #id = ::core::mem::ManuallyDrop::new(#id);
-                            let #id: #real = unsafe {
-                                (&#id as *const ::core::mem::ManuallyDrop<#qopaque> as *const #real).read()
-                            };
-                        })
-                    }
-                    Slot::Ref(i) => {
-                        let (real, qopaque) = (real(i), qopaque(i));
-                        Some(quote! {
-                            let #id = unsafe { &*(#id as *const #qopaque as *const #real) };
-                        })
-                    }
-                    Slot::RefMut(i) => {
-                        let (real, qopaque) = (real(i), qopaque(i));
-                        Some(quote! {
-                            let #id = unsafe { &mut *(#id as *mut #qopaque as *mut #real) };
-                        })
-                    }
-                    // SAFETY (both): as above, plus the implementation's value lives at the
-                    // very address the caller pinned, and the opaque struct is `Unpin` only
-                    // if the associated type is, so the caller could only have built this
-                    // `Pin` by pinning the opaque value (or with `new_unchecked`, upholding
-                    // the same contract). Re-pinning the value in place therefore keeps the
-                    // pinning guarantee the caller already granted.
-                    Slot::PinRef(i) => {
-                        let (real, qopaque) = (real(i), qopaque(i));
-                        Some(quote! {
-                            let #id = unsafe {
-                                let #id: &#qopaque = ::core::pin::Pin::get_ref(#id);
-                                ::core::pin::Pin::new_unchecked(&*(#id as *const #qopaque as *const #real))
-                            };
-                        })
-                    }
-                    Slot::PinRefMut(i) => {
-                        let (real, qopaque) = (real(i), qopaque(i));
-                        Some(quote! {
-                            let #id = unsafe {
-                                let #id: &mut #qopaque = ::core::pin::Pin::get_unchecked_mut(#id);
-                                ::core::pin::Pin::new_unchecked(&mut *(#id as *mut #qopaque as *mut #real))
-                            };
-                        })
-                    }
+            });
+            exports.push(quote! {
+                #[unsafe(export_name = #clone_symbol)]
+                fn #clone_fn(this: &#qopaque) -> #qopaque {
+                    #shims::#clone_fn(this)
                 }
             });
-            let argids = args.iter().map(|(id, _)| id);
-            let call = quote!(<#tvar as #trait_qpath>::#name(#(#argids),*));
-            let call = match unsafety {
-                None => call,
-                // SAFETY: forwarded to the caller through the `unsafe fn` dispatch method
-                // matching this method, which carries the trait method's safety contract.
-                Some(_) => quote!(unsafe { #call }),
+        }
+    }
+
+    for m in methods {
+        let Method {
+            unsafety,
+            name,
+            symbol,
+            args,
+            ret,
+            ..
+        } = m;
+        let slots = args
+            .iter()
+            .map(|(_, ty)| input.classify(ty))
+            .collect::<syn::Result<Vec<_>>>()?;
+        let params = args
+            .iter()
+            .zip(&slots)
+            .map(|((id, ty), slot)| {
+                let ity = input.impl_ty(ty, slot);
+                quote!(#id: #ity)
+            })
+            .collect::<Vec<_>>();
+        // Convert opaque parameters to the implementation's associated type.
+        let convs = args.iter().zip(&slots).filter_map(|((id, _), slot)| {
+            let real = |i: &usize| {
+                let assoc = &input.opaques[*i].assoc;
+                quote!(<#timpl as #trait_qpath>::#assoc)
             };
-            let (ret_ty, body) = match ret {
-                None => (quote!(), call),
-                Some(ty) => {
-                    let slot = input.classify(ty)?;
-                    let ity = input.impl_ty(ty, &slot);
-                    let body = match &slot {
-                        Slot::Value(i) => {
-                            let assoc = &input.opaques[*i].assoc;
-                            let real = quote!(<#tvar as #trait_qpath>::#assoc);
-                            let qopaque = {
-                                let op = &input.opaques[*i].opaque;
-                                quote!(#path::#op)
-                            };
-                            // SAFETY: size and alignment are checked at compile time, so the
-                            // write stays in bounds and is aligned; the opaque struct's only
-                            // field is uninit-tolerant bytes, so `assume_init` is fine.
-                            quote! {
-                                let __unitrait_ret: #real = #call;
-                                let mut __unitrait_out = ::core::mem::MaybeUninit::<#qopaque>::uninit();
-                                unsafe {
-                                    (__unitrait_out.as_mut_ptr() as *mut #real).write(__unitrait_ret);
-                                    __unitrait_out.assume_init()
-                                }
+            let qopaque = |i: &usize| {
+                let op = &input.opaques[*i].opaque;
+                quote!(#path::#op)
+            };
+            match slot {
+                Slot::Plain => None,
+                // SAFETY (all three): opaque values always hold an initialized value of
+                // the implementation's associated type, and size and alignment are
+                // checked at compile time. The by-value case takes ownership, so the
+                // opaque's own Drop must not run: ManuallyDrop suppresses it and the
+                // value is moved out by reading it as the real type.
+                Slot::Value(i) => {
+                    let (real, qopaque) = (real(i), qopaque(i));
+                    Some(quote! {
+                        let #id = ::core::mem::ManuallyDrop::new(#id);
+                        let #id: #real = unsafe {
+                            (&#id as *const ::core::mem::ManuallyDrop<#qopaque> as *const #real).read()
+                        };
+                    })
+                }
+                Slot::Ref(i) => {
+                    let (real, qopaque) = (real(i), qopaque(i));
+                    Some(quote! {
+                        let #id = unsafe { &*(#id as *const #qopaque as *const #real) };
+                    })
+                }
+                Slot::RefMut(i) => {
+                    let (real, qopaque) = (real(i), qopaque(i));
+                    Some(quote! {
+                        let #id = unsafe { &mut *(#id as *mut #qopaque as *mut #real) };
+                    })
+                }
+                // SAFETY (both): as above, plus the implementation's value lives at the
+                // very address the caller pinned, and the opaque struct is `Unpin` only
+                // if the associated type is, so the caller could only have built this
+                // `Pin` by pinning the opaque value (or with `new_unchecked`, upholding
+                // the same contract). Re-pinning the value in place therefore keeps the
+                // pinning guarantee the caller already granted.
+                Slot::PinRef(i) => {
+                    let (real, qopaque) = (real(i), qopaque(i));
+                    Some(quote! {
+                        let #id = unsafe {
+                            let #id: &#qopaque = ::core::pin::Pin::get_ref(#id);
+                            ::core::pin::Pin::new_unchecked(&*(#id as *const #qopaque as *const #real))
+                        };
+                    })
+                }
+                Slot::PinRefMut(i) => {
+                    let (real, qopaque) = (real(i), qopaque(i));
+                    Some(quote! {
+                        let #id = unsafe {
+                            let #id: &mut #qopaque = ::core::pin::Pin::get_unchecked_mut(#id);
+                            ::core::pin::Pin::new_unchecked(&mut *(#id as *mut #qopaque as *mut #real))
+                        };
+                    })
+                }
+            }
+        });
+        let argids = args.iter().map(|(id, _)| id).collect::<Vec<_>>();
+        let call = quote!(<#timpl as #trait_qpath>::#name(#(#argids),*));
+        let call = match unsafety {
+            None => call,
+            // SAFETY: forwarded to the caller through the `unsafe fn` dispatch method
+            // matching this method, which carries the trait method's safety contract.
+            Some(_) => quote!(unsafe { #call }),
+        };
+        let (ret_ty, body) = match ret {
+            None => (quote!(), call),
+            Some(ty) => {
+                let slot = input.classify(ty)?;
+                let ity = input.impl_ty(ty, &slot);
+                let body = match &slot {
+                    Slot::Value(i) => {
+                        let assoc = &input.opaques[*i].assoc;
+                        let real = quote!(<#timpl as #trait_qpath>::#assoc);
+                        let qopaque = {
+                            let op = &input.opaques[*i].opaque;
+                            quote!(#path::#op)
+                        };
+                        // SAFETY: size and alignment are checked at compile time, so the
+                        // write stays in bounds and is aligned; the opaque struct's only
+                        // field is uninit-tolerant bytes, so `assume_init` is fine.
+                        quote! {
+                            let __unitrait_ret: #real = #call;
+                            let mut __unitrait_out = ::core::mem::MaybeUninit::<#qopaque>::uninit();
+                            unsafe {
+                                (__unitrait_out.as_mut_ptr() as *mut #real).write(__unitrait_ret);
+                                __unitrait_out.assume_init()
                             }
                         }
-                        _ => call,
-                    };
-                    (quote!(-> #ity), body)
-                }
-            };
-            Ok(quote! {
-                #[unsafe(export_name = #symbol)]
-                fn #name(#(#params),*) #ret_ty {
-                    #(#convs)*
-                    #body
-                }
-            })
-        })
-        .collect::<syn::Result<Vec<_>>>()?;
+                    }
+                    _ => call,
+                };
+                (quote!(-> #ity), body)
+            }
+        };
+        helpers.push(quote! {
+            #[inline(always)]
+            fn #name(#(#params),*) #ret_ty {
+                #(#convs)*
+                #body
+            }
+        });
+        exports.push(quote! {
+            #[unsafe(export_name = #symbol)]
+            fn #name(#(#params),*) #ret_ty {
+                #shims::#name(#(#argids),*)
+            }
+        });
+    }
 
     Ok(quote! {
         #(#opaque_structs)*
@@ -1880,16 +1917,48 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             #(#dispatch_impl_methods)*
         }
 
+        /// Implementation detail of the implementation macro: binds the implementor's type.
+        #[doc(hidden)]
+        #vis trait #binding {
+            type Type: #name;
+        }
+
         #(#mac_docs)*
         #[macro_export]
         macro_rules! #mac_name {
             (#tvar:ty) => {
                 const _: () = {
-                    #[allow(unused_imports)]
-                    use #path::*;
+                    // The implementor's type is resolved here, in the caller's scope, before
+                    // the glob below can shadow it: a type named like a public item of the
+                    // defining module (the dispatch type, say) still means the caller's.
+                    // Binding it through the trait also checks that it implements the
+                    // unitrait exactly once, at the caller's token, and the shims below get
+                    // that for free from the projection.
+                    struct __UnitraitTag;
+                    impl #path::#binding for __UnitraitTag {
+                        type Type = #tvar;
+                    }
 
-                    #(#opaque_shims)*
-                    #(#method_shims)*
+                    const _: () = {
+                        // Method signatures are pasted verbatim, so the types they name must
+                        // resolve here as they do in the defining module.
+                        #[allow(unused_imports)]
+                        use #path::*;
+
+                        struct __UnitraitShims<__B>(::core::marker::PhantomData<__B>);
+
+                        impl<__B: #path::#binding> __UnitraitShims<__B> {
+                            const CHECKS: () = {
+                                #(#checks)*
+                            };
+
+                            #(#helpers)*
+                        }
+
+                        const _: () = #shims::CHECKS;
+
+                        #(#exports)*
+                    };
                 };
             };
         }

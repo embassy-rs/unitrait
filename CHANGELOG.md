@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Trait methods must no longer have a visibility: the dispatch type's visibility applies
     to all of its methods.
   - Opaque structs are named after the dispatch type, not the trait.
+- The implementation macro resolves the implementor's type in the caller's scope, so it may
+  share its name with a public item of the defining module. Previously the macro's
+  `use PATH::*;` glob could silently make it mean the defining module's item instead.
 - Added opaque associated types: `#[opaque(size = N, align = M)] type Name;` declares a type
   the caller sees as opaque bytes of a fixed maximum size and alignment, while the
   implementation picks the real type.
