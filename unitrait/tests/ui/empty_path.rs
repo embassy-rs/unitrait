@@ -1,8 +1,10 @@
 unitrait::unitrait! {
-    pub trait Foo {
+    pub trait FooDriver {
         #[symbol = "_ui_empty_path"]
-        pub fn foo() -> u32;
+        fn foo() -> u32;
     }
+
+    pub struct Foo;
 
     macro foo_impl(path = );
 }

@@ -3,7 +3,7 @@
 unitrait::unitrait! {
     /// A test trait deriving its symbol names from a prefix.
     #[symbol_prefix = "_unitrait_test_prefixed"]
-    pub trait Prefixed {
+    pub trait PrefixedDriver {
         /// Symbols `_unitrait_test_prefixed_Context_drop` and `..._Context_clone`.
         #[opaque(size = 32, align = 8)]
         pub type Context: Clone + Drop;
@@ -14,18 +14,20 @@ unitrait::unitrait! {
 
         /// Symbol `_unitrait_test_prefixed_ctx_new`.
         #[symbol = "_unitrait_test_prefixed_ctx_new"]
-        pub fn ctx_new(v: u32) -> Self::Context;
+        fn ctx_new(v: u32) -> Self::Context;
 
         /// Derived symbol.
-        pub fn ctx_get(ctx: &Self::Context) -> u32;
+        fn ctx_get(ctx: &Self::Context) -> u32;
 
         /// An explicit override, not `_unitrait_test_prefixed_ctx_token`.
         #[symbol = "_unitrait_test_prefixed_override"]
-        pub fn ctx_token(ctx: &Self::Context) -> Self::Token;
+        fn ctx_token(ctx: &Self::Context) -> Self::Token;
 
         /// Derived symbol on an `unsafe` method.
-        pub unsafe fn token_get(t: Self::Token) -> u32;
+        unsafe fn token_get(t: Self::Token) -> u32;
     }
+
+    pub struct Prefixed;
 
     /// Set the global prefixed implementation.
     macro test_prefixed_impl(path = $crate);
@@ -42,7 +44,7 @@ impl Drop for MyContext {
     fn drop(&mut self) {}
 }
 
-impl Prefixed for MyImpl {
+impl PrefixedDriver for MyImpl {
     type Context = MyContext;
     type Token = u32;
 
@@ -71,7 +73,7 @@ unsafe extern "Rust" {
     #[link_name = "_unitrait_test_prefixed_ctx_get"]
     safe fn raw_ctx_get(ctx: &PrefixedContext) -> u32;
 
-    // Declared `unsafe`, matching the free function generated for the `unsafe` method.
+    // Declared `unsafe`, matching the dispatch method generated for the `unsafe` method.
     #[link_name = "_unitrait_test_prefixed_token_get"]
     fn raw_token_get(t: PrefixedToken) -> u32;
 
@@ -84,23 +86,23 @@ unsafe extern "Rust" {
 
 #[test]
 fn test_derived_symbols_dispatch() {
-    let ctx = ctx_new(7);
-    assert_eq!(ctx_get(&ctx), 7);
+    let ctx = Prefixed::ctx_new(7);
+    assert_eq!(Prefixed::ctx_get(&ctx), 7);
     assert_eq!(raw_ctx_get(&ctx), 7);
 
-    let t = ctx_token(&ctx);
-    assert_eq!(unsafe { token_get(t) }, 7);
+    let t = Prefixed::ctx_token(&ctx);
+    assert_eq!(unsafe { Prefixed::token_get(t) }, 7);
     assert_eq!(unsafe { raw_token_get(t) }, 7);
 }
 
 #[test]
 fn test_derived_drop_and_clone_symbols() {
-    let ctx = ctx_new(3);
+    let ctx = Prefixed::ctx_new(3);
     let mut cloned = raw_ctx_clone(&ctx);
-    assert_eq!(ctx_get(&cloned), 3);
+    assert_eq!(Prefixed::ctx_get(&cloned), 3);
 
     // `clone` on the opaque type reaches the same symbol.
-    assert_eq!(ctx_get(&ctx.clone()), 3);
+    assert_eq!(Prefixed::ctx_get(&ctx.clone()), 3);
 
     // Dropping in place is what `Drop for PrefixedContext` does; forget the husk so it
     // doesn't happen twice.

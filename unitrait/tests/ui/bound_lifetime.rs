@@ -1,12 +1,14 @@
 unitrait::unitrait! {
-    pub trait Foo {
+    pub trait FooDriver {
         #[opaque(size = 8, align = 4)]
         #[drop_symbol = "_ui_bound_lifetime_drop"]
         pub type Context: 'static + Drop;
 
         #[symbol = "_ui_bound_lifetime_new"]
-        pub fn new() -> Self::Context;
+        fn new() -> Self::Context;
     }
+
+    pub struct Foo;
 
     macro foo_impl(path = $crate);
 }

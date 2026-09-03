@@ -1,5 +1,5 @@
 error: explicit lifetimes on references to opaque associated types are not supported
- --> tests/ui/pin_lifetime.rs:8:31
+ --> tests/ui/pin_lifetime.rs:8:27
   |
-8 |         pub fn poke(ctx: Pin<&'static mut Self::Context>);
-  |                               ^^^^^^^
+8 |         fn poke(ctx: Pin<&'static mut Self::Context>);
+  |                           ^^^^^^^

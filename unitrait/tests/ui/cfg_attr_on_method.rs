@@ -1,9 +1,11 @@
 unitrait::unitrait! {
-    pub trait Foo {
+    pub trait FooDriver {
         #[cfg_attr(all(), opaque(size = 8, align = 4))]
         #[symbol = "_ui_cfg_attr_on_method"]
-        pub fn foo() -> u32;
+        fn foo() -> u32;
     }
+
+    pub struct Foo;
 
     macro foo_impl(path = $crate);
 }

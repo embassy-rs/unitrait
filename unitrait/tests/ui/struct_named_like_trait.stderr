@@ -1,0 +1,5 @@
+error: the dispatch type can't have the same name as the trait
+ --> tests/ui/struct_named_like_trait.rs:7:16
+  |
+7 |     pub struct Foo;
+  |                ^^^

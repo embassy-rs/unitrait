@@ -1,8 +1,10 @@
 unitrait::unitrait! {
-    pub trait Foo {
+    pub trait FooDriver {
         #[symbol = "_ui_unknown_assoc_new"]
-        pub fn new() -> Self::Context;
+        fn new() -> Self::Context;
     }
+
+    pub struct Foo;
 
     macro foo_impl(path = $crate);
 }

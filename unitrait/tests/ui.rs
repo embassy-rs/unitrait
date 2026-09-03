@@ -7,6 +7,9 @@ fn ui() {
     t.compile_fail("tests/ui/attr_on_trait.rs");
     t.compile_fail("tests/ui/attr_on_macro.rs");
     t.compile_fail("tests/ui/attr_on_method.rs");
+    t.compile_fail("tests/ui/method_with_visibility.rs");
+    t.compile_fail("tests/ui/missing_struct.rs");
+    t.compile_fail("tests/ui/struct_named_like_trait.rs");
     t.compile_fail("tests/ui/method_missing_symbol.rs");
     t.compile_fail("tests/ui/duplicate_symbol_prefix.rs");
     t.compile_fail("tests/ui/symbol_prefix_not_string.rs");

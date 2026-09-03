@@ -1,18 +1,22 @@
-error[E0277]: the trait bound `MyImpl: Foo` is not satisfied
-  --> tests/ui/impl_not_implemented.rs:12:11
+error[E0277]: the trait bound `MyImpl: FooDriver` is not satisfied
+  --> tests/ui/impl_not_implemented.rs:14:11
    |
-12 | foo_impl!(MyImpl);
+14 | foo_impl!(MyImpl);
    |           ^^^^^^ unsatisfied trait bound
    |
-help: the trait `Foo` is not implemented for `MyImpl`
-  --> tests/ui/impl_not_implemented.rs:10:1
+help: the trait `FooDriver` is not implemented for `MyImpl`
+  --> tests/ui/impl_not_implemented.rs:12:1
    |
-10 | struct MyImpl;
+12 | struct MyImpl;
    | ^^^^^^^^^^^^^
-help: this trait has no implementations, consider adding one
+help: the trait `FooDriver` is implemented for `Foo`
   --> tests/ui/impl_not_implemented.rs:1:1
    |
  1 | / unitrait::unitrait! {
- 2 | |     pub trait Foo {
-   | |_________________^
+ 2 | |     pub trait FooDriver {
+ 3 | |         #[symbol = "_ui_impl_not_implemented"]
+ 4 | |         fn foo() -> u32;
+...  |
+ 7 | |     pub struct Foo;
+   | |__________________^
    = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)

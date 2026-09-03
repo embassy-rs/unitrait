@@ -1,5 +1,5 @@
 error: the trait has no opaque associated type named `Context`
- --> tests/ui/unknown_assoc_type.rs:4:31
+ --> tests/ui/unknown_assoc_type.rs:4:27
   |
-4 |         pub fn new() -> Self::Context;
-  |                               ^^^^^^^
+4 |         fn new() -> Self::Context;
+  |                           ^^^^^^^

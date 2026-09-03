@@ -2,15 +2,15 @@ error[E0080]: evaluation panicked: unitrait: the implementation's associated typ
   --> tests/ui/impl_overaligned.rs:1:1
    |
  1 | / unitrait::unitrait! {
- 2 | |     pub trait Foo {
+ 2 | |     pub trait FooDriver {
  3 | |         #[opaque(size = 8, align = 4)]
  4 | |         #[drop_symbol = "_ui_impl_overaligned_drop"]
 ...  |
-11 | |     macro foo_impl(path = $crate);
-12 | | }
+13 | |     macro foo_impl(path = $crate);
+14 | | }
    | |_^ evaluation of `_::_` failed here
 ...
-27 |   foo_impl!(MyImpl);
+29 |   foo_impl!(MyImpl);
    |   ----------------- in this macro invocation
    |
    = note: this error originates in the macro `$crate::panic::panic_2021` which comes from the expansion of the macro `foo_impl` (in Nightly builds, run with -Z macro-backtrace for more info)

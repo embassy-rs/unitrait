@@ -1,11 +1,13 @@
 unitrait::unitrait! {
-    pub trait Foo {
+    pub trait FooDriver {
         #[opaque(size = 8, align = 4)]
         pub type Context: Default;
 
         #[symbol = "_ui_bound_unsupported_new"]
-        pub fn new() -> Self::Context;
+        fn new() -> Self::Context;
     }
+
+    pub struct Foo;
 
     macro foo_impl(path = $crate);
 }

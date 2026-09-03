@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 unitrait::unitrait! {
     /// A test trait declaring opaque types with various marker bounds.
-    pub trait Marked {
+    pub trait MarkedDriver {
         /// No bounds: the opaque type implements no auto trait.
         #[opaque(size = 8, align = 8)]
         #[drop_symbol = "_unitrait_test_marked_bare_drop"]
@@ -21,20 +21,22 @@ unitrait::unitrait! {
         pub type Owned: Send + Drop;
 
         #[symbol = "_unitrait_test_marked_bare_new"]
-        pub fn bare_new() -> Self::Bare;
+        fn bare_new() -> Self::Bare;
 
         #[symbol = "_unitrait_test_marked_all_new"]
-        pub fn all_new(v: u32) -> Self::All;
+        fn all_new(v: u32) -> Self::All;
 
         #[symbol = "_unitrait_test_marked_all_get"]
-        pub fn all_get(ctx: &Self::All) -> u32;
+        fn all_get(ctx: &Self::All) -> u32;
 
         #[symbol = "_unitrait_test_marked_owned_new"]
-        pub fn owned_new(v: u32) -> Self::Owned;
+        fn owned_new(v: u32) -> Self::Owned;
 
         #[symbol = "_unitrait_test_marked_owned_get"]
-        pub fn owned_get(ctx: &Self::Owned) -> u32;
+        fn owned_get(ctx: &Self::Owned) -> u32;
     }
+
+    pub struct Marked;
 
     /// Set the global implementation.
     macro test_marked_impl(path = $crate);
@@ -55,7 +57,7 @@ impl Drop for Counted {
     }
 }
 
-impl Marked for MyImpl {
+impl MarkedDriver for MyImpl {
     type Bare = BareState;
     type All = u64;
     // The only type with drop glue, so `DROPS` only counts `Owned` values.
@@ -111,9 +113,9 @@ fn test_bounds_do_not_change_layout() {
 #[test]
 fn test_send_opaque_crosses_threads() {
     let before = DROPS.load(Ordering::Relaxed);
-    let ctx = owned_new(21);
+    let ctx = Marked::owned_new(21);
     let value = std::thread::spawn(move || {
-        let v = owned_get(&ctx);
+        let v = Marked::owned_get(&ctx);
         drop(ctx);
         v
     })
@@ -125,8 +127,8 @@ fn test_send_opaque_crosses_threads() {
 
 #[test]
 fn test_bare_opaque_still_works_locally() {
-    let ctx = bare_new();
+    let ctx = Marked::bare_new();
     drop(ctx);
-    let ctx = all_new(5);
-    assert_eq!(all_get(&ctx), 5);
+    let ctx = Marked::all_new(5);
+    assert_eq!(Marked::all_get(&ctx), 5);
 }

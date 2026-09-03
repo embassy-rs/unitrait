@@ -1,11 +1,8 @@
 unitrait::unitrait! {
     pub trait FooDriver {
-        #[opaque(size = 8, align = 4)]
-        #[symbol = "_ui_opaque_on_method"]
+        #[symbol = "_ui_missing_struct"]
         fn foo() -> u32;
     }
-
-    pub struct Foo;
 
     macro foo_impl(path = $crate);
 }

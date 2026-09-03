@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 unitrait::unitrait! {
     /// A test accumulator with caller-allocated state.
-    pub trait Accumulator {
+    pub trait AccumulatorDriver {
         /// Opaque storage for the accumulator state.
         #[opaque(size = 32, align = 8)]
         #[drop_symbol = "_unitrait_test_acc_drop"]
@@ -10,16 +10,18 @@ unitrait::unitrait! {
 
         /// Returns a fresh accumulator seeded with `seed`.
         #[symbol = "_unitrait_test_acc_init"]
-        pub fn acc_init(seed: u64) -> Self::Context;
+        fn acc_init(seed: u64) -> Self::Context;
 
         /// Adds every byte of `data` to the accumulator.
         #[symbol = "_unitrait_test_acc_update"]
-        pub fn acc_update(ctx: &mut Self::Context, data: &[u8]);
+        fn acc_update(ctx: &mut Self::Context, data: &[u8]);
 
         /// Returns the accumulated value.
         #[symbol = "_unitrait_test_acc_get"]
-        pub fn acc_get(ctx: &mut Self::Context) -> u64;
+        fn acc_get(ctx: &mut Self::Context) -> u64;
     }
+
+    pub struct Accumulator;
 
     /// Set the global accumulator implementation.
     macro test_accumulator_impl(path = $crate);
@@ -40,7 +42,7 @@ impl Drop for MyState {
     }
 }
 
-impl Accumulator for MyAccumulator {
+impl AccumulatorDriver for MyAccumulator {
     type Context = MyState;
 
     fn acc_init(seed: u64) -> MyState {
@@ -65,22 +67,22 @@ fn test_context_dispatch() {
     assert_eq!(core::mem::size_of::<AccumulatorContext>(), 32);
     assert_eq!(core::mem::align_of::<AccumulatorContext>(), 8);
 
-    let mut ctx = acc_init(100);
-    acc_update(&mut ctx, &[1, 2, 3]);
-    assert_eq!(acc_get(&mut ctx), 106);
-    acc_update(&mut ctx, &[4]);
-    assert_eq!(acc_get(&mut ctx), 110);
+    let mut ctx = Accumulator::acc_init(100);
+    Accumulator::acc_update(&mut ctx, &[1, 2, 3]);
+    assert_eq!(Accumulator::acc_get(&mut ctx), 106);
+    Accumulator::acc_update(&mut ctx, &[4]);
+    assert_eq!(Accumulator::acc_get(&mut ctx), 110);
 
-    let mut other = acc_init(0);
-    assert_eq!(acc_get(&mut other), 0);
-    assert_eq!(acc_get(&mut ctx), 110);
+    let mut other = Accumulator::acc_init(0);
+    assert_eq!(Accumulator::acc_get(&mut other), 0);
+    assert_eq!(Accumulator::acc_get(&mut ctx), 110);
 }
 
 #[test]
 fn test_context_drop() {
     let before = DROPS.load(Ordering::Relaxed);
-    let mut ctx = acc_init(1);
-    acc_update(&mut ctx, &[1]);
+    let mut ctx = Accumulator::acc_init(1);
+    Accumulator::acc_update(&mut ctx, &[1]);
     assert_eq!(DROPS.load(Ordering::Relaxed), before);
     drop(ctx);
     assert_eq!(DROPS.load(Ordering::Relaxed), before + 1);

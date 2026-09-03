@@ -1,5 +1,5 @@
 error: `Self` may only appear as `Self::Name`, `&Self::Name`, `&mut Self::Name`, `Pin<&Self::Name>` or `Pin<&mut Self::Name>` at the top level of a parameter or return type: nested uses cannot be bridged across the extern symbol
- --> tests/ui/nested_self.rs:8:32
+ --> tests/ui/nested_self.rs:8:28
   |
-8 |         pub fn new() -> Option<Self::Context>;
-  |                                ^^^^
+8 |         fn new() -> Option<Self::Context>;
+  |                            ^^^^

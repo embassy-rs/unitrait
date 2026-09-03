@@ -1,35 +1,35 @@
 error[E0277]: the trait bound `String: Copy` is not satisfied
-  --> tests/ui/impl_not_copy.rs:16:20
+  --> tests/ui/impl_not_copy.rs:18:20
    |
-16 |     type Context = String;
+18 |     type Context = String;
    |                    ^^^^^^ the trait `Copy` is not implemented for `String`
    |
-note: required by a bound in `Foo::Context`
+note: required by a bound in `FooDriver::Context`
   --> tests/ui/impl_not_copy.rs:1:1
    |
  1 | / unitrait::unitrait! {
- 2 | |     pub trait Foo {
+ 2 | |     pub trait FooDriver {
  3 | |         #[opaque(size = 32, align = 8)]
  4 | |         pub type Context: Copy;
 ...  |
-10 | |     macro foo_impl(path = $crate);
-11 | | }
-   | |_^ required by this bound in `Foo::Context`
+12 | |     macro foo_impl(path = $crate);
+13 | | }
+   | |_^ required by this bound in `FooDriver::Context`
    = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0080]: evaluation panicked: unitrait: the implementation's associated type needs drop, but the opaque associated type has no `Drop` bound
   --> tests/ui/impl_not_copy.rs:1:1
    |
  1 | / unitrait::unitrait! {
- 2 | |     pub trait Foo {
+ 2 | |     pub trait FooDriver {
  3 | |         #[opaque(size = 32, align = 8)]
  4 | |         pub type Context: Copy;
 ...  |
-10 | |     macro foo_impl(path = $crate);
-11 | | }
+12 | |     macro foo_impl(path = $crate);
+13 | | }
    | |_^ evaluation of `_::_` failed here
 ...
-23 |   foo_impl!(MyImpl);
+25 |   foo_impl!(MyImpl);
    |   ----------------- in this macro invocation
    |
    = note: this error originates in the macro `$crate::panic::panic_2021` which comes from the expansion of the macro `foo_impl` (in Nightly builds, run with -Z macro-backtrace for more info)

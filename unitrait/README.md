@@ -9,7 +9,9 @@ errors if there is no implementation or more than one.
 
 This is achieved by dispatching calls through `extern "Rust"` functions: the
 defining crate declares (and calls) functions by symbol name, and the
-implementing crate exports them. The linker matches them up.
+implementing crate exports them. The linker matches them up. Callers reach
+them through a *dispatch type*, a unit struct with one method per trait method
+that also implements the trait itself.
 
 The use case is allowing pluggalbe "drivers" for foundational, process-wide facilities where generics would be too viral and `dyn` too costly. For example, it's used for the `embassy-time` driver and
 the `embassy-executor` pender and trace hooks.
@@ -24,8 +26,11 @@ unitrait::unitrait! {
     pub trait Driver {
         /// Returns the current frobnication level.
         #[symbol = "_frob_level"]
-        pub fn level() -> u32;
+        fn level() -> u32;
     }
+
+    /// The global frobnicator.
+    pub struct Frob;
 
     /// Set the global frobnicator driver.
     macro frob_driver_impl(path = $crate);
@@ -35,8 +40,10 @@ unitrait::unitrait! {
 This expands to:
 
 - The trait, exactly as written.
-- One free function per method (here `pub fn level() -> u32`) that calls the
-  global implementation through the extern symbol.
+- The dispatch type `Frob`, a unit struct with one inherent method per trait
+  method (here `Frob::level() -> u32`) that calls the global implementation
+  through the extern symbol. `Frob` also implements `Driver`, so generic code
+  written against the trait accepts it.
 - A macro (here `frob_driver_impl!`) that implementor crates use to register
   a type as the global implementation.
 
@@ -52,7 +59,8 @@ impl frob::Driver for MyDriver {
 frob::frob_driver_impl!(MyDriver);
 ```
 
-Now `frob::level()` works from any crate in the tree.
+Now `frob::Frob::level()` works from any crate in the tree. Since methods live
+on the dispatch type, several unitraits in one module may share method names.
 
 ## Symbol names
 
@@ -65,12 +73,14 @@ unitrait::unitrait! {
     #[symbol_prefix = "_frob_v1"]
     pub trait Driver {
         /// Uses `_frob_v1_level`.
-        pub fn level() -> u32;
+        fn level() -> u32;
 
         /// Overridden, so it uses `_frob_legacy_reset`.
         #[symbol = "_frob_legacy_reset"]
-        pub fn reset();
+        fn reset();
     }
+
+    pub struct Frob;
 
     macro frob_driver_impl(path = $crate);
 }
@@ -89,31 +99,33 @@ implementation's types:
 
 ```rust,ignore
 unitrait::unitrait! {
-    pub trait Hash {
+    pub trait HashDriver {
         /// Opaque storage for the implementation's hash state.
         #[opaque(size = 128, align = 16)]
         #[drop_symbol = "_hash_context_drop"]
         pub type Context: Drop;
 
         #[symbol = "_hash_init"]
-        pub fn hash_init() -> Self::Context;
+        fn init() -> Self::Context;
 
         #[symbol = "_hash_update"]
-        pub fn hash_update(ctx: &mut Self::Context, data: &[u8]);
+        fn update(ctx: &mut Self::Context, data: &[u8]);
     }
+
+    pub struct Hash;
 
     macro hash_impl(path = $crate);
 }
 ```
 
-Callers see `HashContext` (named after the trait plus the associated type), an
-opaque type with the declared size and alignment; the implementation sets
-`type Context` to its actual state type, and the implementation macro checks at
-compile time that it fits. A trait may declare any number of opaque types, and
+Callers see `HashContext` (named after the dispatch type plus the associated
+type), an opaque type with the declared size and alignment, returned by
+`Hash::init()`; the implementation sets `type Context` to its actual state
+type, and the implementation macro checks at compile time that it fits. A trait may declare any number of opaque types, and
 methods may use each as `Self::Name`, `&Self::Name`, `&mut Self::Name`,
 `Pin<&Self::Name>` or `Pin<&mut Self::Name>` in any parameter, and return one
 by value. Opaque values are only obtainable from methods returning one, so they
-always hold initialized state — the free functions are safe.
+always hold initialized state — the dispatch methods are safe.
 
 An opaque type with a `Drop` bound gets a `Drop` impl, which drops the
 implementation's value in place through the extern symbol named by its

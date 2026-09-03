@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 
-## 1.2.0 - ReleaseDate
+## 2.0.0 - ReleaseDate
 
+- **Breaking:** calls go through a *dispatch type* instead of free functions. A `struct NAME;`
+  line between the trait and the `macro` line names it; it gets one inherent method per trait
+  method (`NAME::method(...)`) and implements the trait itself. Several unitraits in one
+  module may therefore share method names.
+  - Trait methods must no longer have a visibility: the dispatch type's visibility applies
+    to all of its methods.
+  - Opaque structs are named after the dispatch type, not the trait.
 - Added opaque associated types: `#[opaque(size = N, align = M)] type Name;` declares a type
   the caller sees as opaque bytes of a fixed maximum size and alignment, while the
   implementation picks the real type.

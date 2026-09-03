@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 unitrait::unitrait! {
     /// A toy byte-shifting codec.
-    pub trait Codec {
+    pub trait CodecDriver {
         /// Opaque encoder state.
         #[opaque(size = 16, align = 8)]
         #[drop_symbol = "_unitrait_test_codec_encoder_drop"]
@@ -18,25 +18,27 @@ unitrait::unitrait! {
 
         /// Returns a fresh encoder adding `shift` to every byte.
         #[symbol = "_unitrait_test_codec_encoder_new"]
-        pub fn encoder_new(shift: u8) -> Self::Encoder;
+        fn encoder_new(shift: u8) -> Self::Encoder;
 
         /// Returns the decoder matching `enc`.
         #[symbol = "_unitrait_test_codec_decoder_for"]
-        pub fn decoder_for(enc: &Self::Encoder) -> Self::Decoder;
+        fn decoder_for(enc: &Self::Encoder) -> Self::Decoder;
 
         /// Encodes `data` in place. The opaque parameter is not in first position.
         #[symbol = "_unitrait_test_codec_encode"]
-        pub fn encode(data: &mut [u8], enc: &mut Self::Encoder);
+        fn encode(data: &mut [u8], enc: &mut Self::Encoder);
 
         /// Decodes `data` in place, consuming `dec`. Returns how many bytes this decoder
         /// has decoded in total, including this call.
         #[symbol = "_unitrait_test_codec_decode_last"]
-        pub fn decode_last(data: &mut [u8], dec: Self::Decoder) -> u32;
+        fn decode_last(data: &mut [u8], dec: Self::Decoder) -> u32;
 
         /// Returns how many bytes `enc` has encoded so far.
         #[symbol = "_unitrait_test_codec_encoded"]
-        pub fn encoded(enc: &Self::Encoder) -> u32;
+        fn encoded(enc: &Self::Encoder) -> u32;
     }
+
+    pub struct Codec;
 
     /// Set the global codec implementation.
     macro codec_impl(path = $crate);
@@ -69,7 +71,7 @@ impl Drop for MyDecoder {
     }
 }
 
-impl Codec for MyCodec {
+impl CodecDriver for MyCodec {
     type Encoder = MyEncoder;
     type Decoder = MyDecoder;
 
@@ -108,19 +110,19 @@ codec_impl!(MyCodec);
 
 #[test]
 fn test_multiple_opaque_types() {
-    let mut enc = encoder_new(3);
-    let dec = decoder_for(&enc);
+    let mut enc = Codec::encoder_new(3);
+    let dec = Codec::decoder_for(&enc);
 
     let mut data = *b"hello";
-    encode(&mut data, &mut enc);
+    Codec::encode(&mut data, &mut enc);
     assert_ne!(&data, b"hello");
-    assert_eq!(encoded(&enc), 5);
+    assert_eq!(Codec::encoded(&enc), 5);
 
     let before_enc = ENCODER_DROPS.load(Ordering::Relaxed);
     let before_dec = DECODER_DROPS.load(Ordering::Relaxed);
 
     // `dec` is consumed by value; the implementation drops it exactly once.
-    assert_eq!(decode_last(&mut data, dec), 5);
+    assert_eq!(Codec::decode_last(&mut data, dec), 5);
     assert_eq!(&data, b"hello");
     assert_eq!(DECODER_DROPS.load(Ordering::Relaxed), before_dec + 1);
 

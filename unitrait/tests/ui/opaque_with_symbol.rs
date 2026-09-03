@@ -1,12 +1,14 @@
 unitrait::unitrait! {
-    pub trait Foo {
+    pub trait FooDriver {
         #[opaque(size = 8, align = 4)]
         #[symbol = "_ui_opaque_with_symbol_drop"]
         pub type Context;
 
         #[symbol = "_ui_opaque_with_symbol_new"]
-        pub fn new() -> Self::Context;
+        fn new() -> Self::Context;
     }
+
+    pub struct Foo;
 
     macro foo_impl(path = $crate);
 }

@@ -1,7 +1,7 @@
 error[E0277]: `*mut ()` cannot be sent between threads safely
-  --> tests/ui/opaque_not_auto.rs:35:19
+  --> tests/ui/opaque_not_auto.rs:37:19
    |
-35 |     assert_send::<FooContext>();
+37 |     assert_send::<FooContext>();
    |                   ^^^^^^^^^^ `*mut ()` cannot be sent between threads safely
    |
    = help: within `FooContext`, the trait `Send` is not implemented for `*mut ()`
@@ -17,15 +17,15 @@ note: required because it appears within the type `FooContext`
  5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_send`
-  --> tests/ui/opaque_not_auto.rs:26:19
+  --> tests/ui/opaque_not_auto.rs:28:19
    |
-26 | fn assert_send<T: Send>() {}
+28 | fn assert_send<T: Send>() {}
    |                   ^^^^ required by this bound in `assert_send`
 
 error[E0277]: `*mut ()` cannot be shared between threads safely
-  --> tests/ui/opaque_not_auto.rs:36:19
+  --> tests/ui/opaque_not_auto.rs:38:19
    |
-36 |     assert_sync::<FooContext>();
+38 |     assert_sync::<FooContext>();
    |                   ^^^^^^^^^^ `*mut ()` cannot be shared between threads safely
    |
    = help: within `FooContext`, the trait `Sync` is not implemented for `*mut ()`
@@ -41,15 +41,15 @@ note: required because it appears within the type `FooContext`
  5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_sync`
-  --> tests/ui/opaque_not_auto.rs:27:19
+  --> tests/ui/opaque_not_auto.rs:29:19
    |
-27 | fn assert_sync<T: Sync>() {}
+29 | fn assert_sync<T: Sync>() {}
    |                   ^^^^ required by this bound in `assert_sync`
 
 error[E0277]: `UnsafeCell<()>` cannot be shared between threads safely
-  --> tests/ui/opaque_not_auto.rs:36:19
+  --> tests/ui/opaque_not_auto.rs:38:19
    |
-36 |     assert_sync::<FooContext>();
+38 |     assert_sync::<FooContext>();
    |                   ^^^^^^^^^^ `UnsafeCell<()>` cannot be shared between threads safely
    |
    = help: within `FooContext`, the trait `Sync` is not implemented for `UnsafeCell<()>`
@@ -65,15 +65,15 @@ note: required because it appears within the type `FooContext`
  5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_sync`
-  --> tests/ui/opaque_not_auto.rs:27:19
+  --> tests/ui/opaque_not_auto.rs:29:19
    |
-27 | fn assert_sync<T: Sync>() {}
+29 | fn assert_sync<T: Sync>() {}
    |                   ^^^^ required by this bound in `assert_sync`
 
 error[E0277]: `PhantomPinned` cannot be unpinned
-  --> tests/ui/opaque_not_auto.rs:37:20
+  --> tests/ui/opaque_not_auto.rs:39:20
    |
-37 |     assert_unpin::<FooContext>();
+39 |     assert_unpin::<FooContext>();
    |                    ^^^^^^^^^^ within `FooContext`, the trait `Unpin` is not implemented for `PhantomPinned`
    |
    = note: consider using the `pin!` macro
@@ -90,15 +90,15 @@ note: required because it appears within the type `FooContext`
  5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_unpin`
-  --> tests/ui/opaque_not_auto.rs:28:20
+  --> tests/ui/opaque_not_auto.rs:30:20
    |
-28 | fn assert_unpin<T: Unpin>() {}
+30 | fn assert_unpin<T: Unpin>() {}
    |                    ^^^^^ required by this bound in `assert_unpin`
 
 error[E0277]: the type `&'static mut ()` may not be safely transferred across an unwind boundary
-  --> tests/ui/opaque_not_auto.rs:38:26
+  --> tests/ui/opaque_not_auto.rs:40:26
    |
-38 |     assert_unwind_safe::<FooContext>();
+40 |     assert_unwind_safe::<FooContext>();
    |                          ^^^^^^^^^^ `&'static mut ()` may not be safely transferred across an unwind boundary
    |
    = help: within `FooContext`, the trait `UnwindSafe` is not implemented for `&'static mut ()`
@@ -115,15 +115,15 @@ note: required because it appears within the type `FooContext`
  5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_unwind_safe`
-  --> tests/ui/opaque_not_auto.rs:29:26
+  --> tests/ui/opaque_not_auto.rs:31:26
    |
-29 | fn assert_unwind_safe<T: std::panic::UnwindSafe>() {}
+31 | fn assert_unwind_safe<T: std::panic::UnwindSafe>() {}
    |                          ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `assert_unwind_safe`
 
 error[E0277]: the type `UnsafeCell<()>` may contain interior mutability and a reference may not be safely transferable across a catch_unwind boundary
-  --> tests/ui/opaque_not_auto.rs:39:30
+  --> tests/ui/opaque_not_auto.rs:41:30
    |
-39 |     assert_ref_unwind_safe::<FooContext>();
+41 |     assert_ref_unwind_safe::<FooContext>();
    |                              ^^^^^^^^^^ `UnsafeCell<()>` may contain interior mutability and a reference may not be safely transferable across a catch_unwind boundary
    |
    = help: within `FooContext`, the trait `RefUnwindSafe` is not implemented for `UnsafeCell<()>`
@@ -139,7 +139,7 @@ note: required because it appears within the type `FooContext`
  5 |         pub type Context: Drop;
    |                  ^^^^^^^
 note: required by a bound in `assert_ref_unwind_safe`
-  --> tests/ui/opaque_not_auto.rs:30:30
+  --> tests/ui/opaque_not_auto.rs:32:30
    |
-30 | fn assert_ref_unwind_safe<T: std::panic::RefUnwindSafe>() {}
+32 | fn assert_ref_unwind_safe<T: std::panic::RefUnwindSafe>() {}
    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `assert_ref_unwind_safe`

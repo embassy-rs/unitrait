@@ -1,5 +1,5 @@
 error: unitrait methods must not have a `self` parameter; store state in `static`s or in an opaque associated type
- --> tests/ui/self_value.rs:4:20
+ --> tests/ui/self_value.rs:4:16
   |
-4 |         pub fn foo(self) -> u32;
-  |                    ^^^^
+4 |         fn foo(self) -> u32;
+  |                ^^^^

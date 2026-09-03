@@ -5,27 +5,29 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 unitrait::unitrait! {
     /// A test trait whose state must not move once started.
-    pub trait Anchored {
+    pub trait AnchoredDriver {
         /// Opaque storage for the implementation's state.
         #[opaque(size = 32, align = 8)]
         #[drop_symbol = "_unitrait_test_anchored_drop"]
         pub type State: Drop;
 
         #[symbol = "_unitrait_test_anchored_new"]
-        pub fn anchored_new(v: u32) -> Self::State;
+        fn anchored_new(v: u32) -> Self::State;
 
         /// Records the address the state was pinned at.
         #[symbol = "_unitrait_test_anchored_start"]
-        pub fn anchored_start(state: Pin<&mut Self::State>);
+        fn anchored_start(state: Pin<&mut Self::State>);
 
         /// Bumps the value, checking the state hasn't moved since `anchored_start`.
         #[symbol = "_unitrait_test_anchored_bump"]
-        pub fn anchored_bump(state: Pin<&mut Self::State>) -> u32;
+        fn anchored_bump(state: Pin<&mut Self::State>) -> u32;
 
         /// Reads the value through a pinned shared reference.
         #[symbol = "_unitrait_test_anchored_get"]
-        pub fn anchored_get(state: Pin<&Self::State>) -> u32;
+        fn anchored_get(state: Pin<&Self::State>) -> u32;
     }
+
+    pub struct Anchored;
 
     /// Set the global implementation.
     macro test_anchored_impl(path = $crate);
@@ -56,7 +58,7 @@ impl MyState {
     }
 }
 
-impl Anchored for MyImpl {
+impl AnchoredDriver for MyImpl {
     type State = MyState;
 
     fn anchored_new(v: u32) -> MyState {
@@ -94,21 +96,21 @@ fn assert_unpin<T: ::core::marker::Unpin>() {}
 fn test_pinned_state_keeps_its_address() {
     let before = DROPS.load(Ordering::Relaxed);
     {
-        let mut state = pin!(anchored_new(10));
-        anchored_start(state.as_mut());
-        assert_eq!(anchored_bump(state.as_mut()), 11);
-        assert_eq!(anchored_bump(state.as_mut()), 12);
-        assert_eq!(anchored_get(state.as_ref()), 12);
+        let mut state = pin!(Anchored::anchored_new(10));
+        Anchored::anchored_start(state.as_mut());
+        assert_eq!(Anchored::anchored_bump(state.as_mut()), 11);
+        assert_eq!(Anchored::anchored_bump(state.as_mut()), 12);
+        assert_eq!(Anchored::anchored_get(state.as_ref()), 12);
     }
     assert_eq!(DROPS.load(Ordering::Relaxed), before + 1);
 }
 
 #[test]
 fn test_pinning_on_the_heap() {
-    let mut state = Box::pin(anchored_new(0));
-    anchored_start(state.as_mut());
-    assert_eq!(anchored_bump(state.as_mut()), 1);
-    assert_eq!(anchored_get(state.as_ref()), 1);
+    let mut state = Box::pin(Anchored::anchored_new(0));
+    Anchored::anchored_start(state.as_mut());
+    assert_eq!(Anchored::anchored_bump(state.as_mut()), 1);
+    assert_eq!(Anchored::anchored_get(state.as_ref()), 1);
 }
 
 #[test]

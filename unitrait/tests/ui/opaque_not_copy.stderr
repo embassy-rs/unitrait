@@ -1,32 +1,32 @@
 error[E0382]: use of moved value: `ctx`
-  --> tests/ui/opaque_not_copy.rs:35:10
+  --> tests/ui/opaque_not_copy.rs:37:15
    |
-32 |     let ctx = new();
+34 |     let ctx = Foo::new();
    |         --- move occurs because `ctx` has type `FooContext`, which does not implement the `Copy` trait
-33 |     take(ctx);
-   |          --- value moved here
-34 |     // Without a `Copy` bound the opaque type isn't `Copy`, even though `u32` is.
-35 |     take(ctx);
-   |          ^^^ value used here after move
+35 |     Foo::take(ctx);
+   |               --- value moved here
+36 |     // Without a `Copy` bound the opaque type isn't `Copy`, even though `u32` is.
+37 |     Foo::take(ctx);
+   |               ^^^ value used here after move
    |
-note: consider changing this parameter type in function `take` to borrow instead if owning the value isn't necessary
+note: consider changing this parameter type in method `take` to borrow instead if owning the value isn't necessary
   --> tests/ui/opaque_not_copy.rs:5:18
    |
  5 |         pub type Context: Drop;
    |                  ^^^^^^^ this parameter takes ownership of the value
 ...
-11 |         pub fn take(ctx: Self::Context);
-   |                ---- in this function
+11 |         fn take(ctx: Self::Context);
+   |            ---- in this method
 note: if `FooContext` implemented `Clone`, you could clone the value
   --> tests/ui/opaque_not_copy.rs:1:1
    |
  1 | / unitrait::unitrait! {
- 2 | |     pub trait Foo {
+ 2 | |     pub trait FooDriver {
  3 | |         #[opaque(size = 8, align = 4)]
  4 | |         #[drop_symbol = "_ui_opaque_not_copy_drop"]
  5 | |         pub type Context: Drop;
    | |________________________^ consider implementing `Clone` for this type
 ...
-33 |       take(ctx);
-   |            --- you could clone this value
+35 |       Foo::take(ctx);
+   |                 --- you could clone this value
    = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)

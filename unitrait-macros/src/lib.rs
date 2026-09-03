@@ -15,14 +15,17 @@ use syn::{
 
 /// Define a unitrait: a trait with a single global implementation, resolved at link time.
 ///
-/// This macro takes a trait definition and the name of an "implementation macro", and emits:
+/// This macro takes a trait definition, the name of a "dispatch type" and the name of an
+/// "implementation macro", and emits:
 ///
 /// - The trait, as written.
-/// - One free function per trait method, with the same name, signature and documentation,
-///   which calls the same method on the global implementation. These functions are callable
-///   from anywhere in the crate tree, including crates that can't see the implementation.
-///   Each free function's visibility is the visibility written before `fn` on the method
-///   (private if omitted, see below).
+/// - The dispatch type: a unit struct with one inherent method per trait method, with the
+///   same name, signature and documentation, which calls the same method on the global
+///   implementation. These methods are callable from anywhere in the crate tree, including
+///   crates that can't see the implementation. The dispatch type also implements the trait,
+///   forwarding to those methods, so it can be used wherever an implementation of the trait
+///   is expected. Because the methods live on a type, several unitraits in one module may
+///   use the same method names.
 /// - The implementation macro, which registers a type as the global implementation of the
 ///   trait. It must be invoked exactly once across the whole crate tree; the program will
 ///   fail to link if it's invoked zero or multiple times.
@@ -37,7 +40,7 @@ use syn::{
 ///     pub trait Driver {
 ///         /// Returns the current frobnication level.
 ///         #[symbol = "_frob_level"]
-///         pub fn level() -> u32;
+///         fn level() -> u32;
 ///
 ///         /// Returns the item associated with `token`.
 ///         ///
@@ -45,8 +48,11 @@ use syn::{
 ///         ///
 ///         /// `token` must have been obtained from [`Item::token`].
 ///         #[symbol = "_frob_item"]
-///         pub unsafe fn item(token: u32) -> &'static mut Item;
+///         unsafe fn item(token: u32) -> &'static mut Item;
 ///     }
+///
+///     /// The global frobnicator.
+///     pub struct Frob;
 ///
 ///     /// Set the global frobnicator driver.
 ///     macro frob_driver_impl(path = $crate);
@@ -57,7 +63,7 @@ use syn::{
 /// #     unsafe fn item(_token: u32) -> &'static mut Item { unimplemented!() }
 /// # }
 /// # frob_driver_impl!(MyDriver);
-/// # fn main() { assert_eq!(level(), 42); }
+/// # fn main() { assert_eq!(Frob::level(), 42); }
 /// ```
 ///
 /// Trait methods:
@@ -69,17 +75,20 @@ use syn::{
 ///   attribute to derive one. Symbol names must be unique across the program: prefix them
 ///   with your crate's name and version. Changing a method's symbol name or signature is an
 ///   ABI-breaking change between the defining crate and implementor crates.
-/// - may be `unsafe`. The corresponding free function will be `unsafe` too.
-/// - may have a visibility (e.g. `pub fn`, `pub(crate) fn`). It sets the visibility of the
-///   generated free function only. Omit it to make the free function private, e.g. when
-///   only the defining crate should call the unitrait, while the (more visible) trait
-///   stays implementable by other crates.
+/// - may be `unsafe`. The corresponding dispatch method will be `unsafe` too.
+/// - must not have a visibility: the dispatch methods are as visible as the dispatch type.
+///
+/// The `VIS struct NAME;` line names the dispatch type, which must not share the trait's
+/// name. Its visibility is also that of its inherent methods: make it `pub(crate)` when only
+/// the defining crate should call the unitrait, while the (more visible) trait stays
+/// implementable by other crates. Attributes written on this line are applied to the struct
+/// as they are, so it may for example `#[derive(...)]`.
 ///
 /// The `macro NAME(path = PATH);` line sets the name of the generated implementation macro.
 /// `PATH` must be the path of the module containing the `unitrait!` invocation, as seen from
 /// other crates, starting with `$crate` — e.g. `$crate` if invoked at the crate root, or
 /// `$crate::foo::bar` if invoked in the module `foo::bar`. It's used by the implementation
-/// macro to name the trait, so the module must be publicly reachable.
+/// macro to name the trait and the dispatch type, so the module must be publicly reachable.
 ///
 /// # Symbol names
 ///
@@ -96,12 +105,15 @@ use syn::{
 ///         pub type Context: Drop;
 ///
 ///         /// Uses the symbol `_frob_v1_level`.
-///         pub fn level(ctx: &Self::Context) -> u32;
+///         fn level(ctx: &Self::Context) -> u32;
 ///
 ///         /// Overridden: uses `_frob_legacy_reset`, not `_frob_v1_reset`.
 ///         #[symbol = "_frob_legacy_reset"]
-///         pub fn reset(ctx: &mut Self::Context);
+///         fn reset(ctx: &mut Self::Context);
 ///     }
+///
+///     /// The global frobnicator.
+///     pub struct Frob;
 ///
 ///     /// Set the global frobnicator driver.
 ///     macro frob_driver_impl(path = $crate);
@@ -141,7 +153,7 @@ use syn::{
 /// ```
 /// unitrait::unitrait! {
 ///     /// A rolling checksum.
-///     pub trait Checksum {
+///     pub trait ChecksumDriver {
 ///         /// Opaque storage for the implementation's checksum state.
 ///         #[opaque(size = 16, align = 8)]
 ///         #[drop_symbol = "_cksum_context_drop"]
@@ -149,34 +161,37 @@ use syn::{
 ///
 ///         /// Returns a fresh checksum state.
 ///         #[symbol = "_cksum_init"]
-///         pub fn cksum_init() -> Self::Context;
+///         fn init() -> Self::Context;
 ///
 ///         /// Absorbs `data` into the checksum state.
 ///         #[symbol = "_cksum_update"]
-///         pub fn cksum_update(ctx: &mut Self::Context, data: &[u8]);
+///         fn update(ctx: &mut Self::Context, data: &[u8]);
 ///
 ///         /// Returns the checksum of the absorbed data.
 ///         #[symbol = "_cksum_finish"]
-///         pub fn cksum_finish(ctx: &Self::Context) -> u32;
+///         fn finish(ctx: &Self::Context) -> u32;
 ///     }
+///
+///     /// The global checksum.
+///     pub struct Checksum;
 ///
 ///     /// Set the global checksum implementation.
 ///     macro checksum_impl(path = $crate);
 /// }
 /// # struct Fletcher;
-/// # impl Checksum for Fletcher {
+/// # impl ChecksumDriver for Fletcher {
 /// #     type Context = (u32, u32);
-/// #     fn cksum_init() -> (u32, u32) { (0, 0) }
-/// #     fn cksum_update(ctx: &mut (u32, u32), data: &[u8]) {
+/// #     fn init() -> (u32, u32) { (0, 0) }
+/// #     fn update(ctx: &mut (u32, u32), data: &[u8]) {
 /// #         for &b in data { ctx.0 = (ctx.0 + b as u32) % 65535; ctx.1 = (ctx.1 + ctx.0) % 65535; }
 /// #     }
-/// #     fn cksum_finish(ctx: &(u32, u32)) -> u32 { ctx.1 << 16 | ctx.0 }
+/// #     fn finish(ctx: &(u32, u32)) -> u32 { ctx.1 << 16 | ctx.0 }
 /// # }
 /// # checksum_impl!(Fletcher);
 /// # fn main() {
-/// #     let mut ctx = cksum_init();
-/// #     cksum_update(&mut ctx, b"hello");
-/// #     assert_ne!(cksum_finish(&ctx), 0);
+/// #     let mut ctx = Checksum::init();
+/// #     Checksum::update(&mut ctx, b"hello");
+/// #     assert_ne!(Checksum::finish(&ctx), 0);
 /// # }
 /// ```
 ///
@@ -189,12 +204,13 @@ use syn::{
 /// - `type Name;` in the trait, with the declared bounds. The implementation sets it to a
 ///   type of its choosing, which must have size at most `N` rounded up to a multiple of `M`,
 ///   and alignment at most `M`; the implementation macro verifies both at compile time.
-/// - The opaque struct, named by concatenating the trait name and the associated type name
-///   (`ChecksumContext` above), laid out as `MaybeUninit<[u8; N]>` with `N` rounded up to a
-///   multiple of `M`, and alignment `M`. Its visibility is the one written on the `type`
-///   declaration (private if omitted, like free functions); note the implementation macro
-///   and the free functions name it, so it must be visible wherever the trait is
-///   implemented or the type is used.
+/// - The opaque struct, named by concatenating the dispatch type's name and the associated
+///   type name (`ChecksumContext` above), laid out as `MaybeUninit<[u8; N]>` with `N`
+///   rounded up to a multiple of `M`, and alignment `M`. Its visibility is the one written on
+///   the `type` declaration (private if omitted); note the implementation macro and the
+///   dispatch type's methods name it, so it must be visible wherever the trait is
+///   implemented or the type is used. The dispatch type's impl of the trait sets
+///   `type Name` to it.
 ///
 /// An opaque struct value always holds an initialized value of the implementation's
 /// (unknown to the caller) associated type: the only way to obtain one is through a method
@@ -208,7 +224,7 @@ use syn::{
 /// ```
 /// unitrait::unitrait! {
 ///     /// A rolling checksum.
-///     pub trait Checksum {
+///     pub trait ChecksumDriver {
 ///         /// Opaque storage for the implementation's checksum state.
 ///         #[cfg_attr(feature = "wide-checksum", opaque(size = 64, align = 16))]
 ///         #[cfg_attr(target_pointer_width = "16", opaque(size = 8, align = 2))]
@@ -217,19 +233,22 @@ use syn::{
 ///
 ///         /// Returns a fresh checksum state.
 ///         #[symbol = "_cksum_cfg_init"]
-///         pub fn cksum_init() -> Self::Context;
+///         fn init() -> Self::Context;
 ///     }
+///
+///     /// The global checksum.
+///     pub struct Checksum;
 ///
 ///     /// Set the global checksum implementation.
 ///     macro checksum_impl(path = $crate);
 /// }
 /// # struct Fletcher;
-/// # impl Checksum for Fletcher {
+/// # impl ChecksumDriver for Fletcher {
 /// #     type Context = (u32, u32);
-/// #     fn cksum_init() -> (u32, u32) { (0, 0) }
+/// #     fn init() -> (u32, u32) { (0, 0) }
 /// # }
 /// # checksum_impl!(Fletcher);
-/// # fn main() { let _ = cksum_init(); }
+/// # fn main() { let _ = Checksum::init(); }
 /// ```
 ///
 /// The attributes are tried in source order and the first one whose predicate holds is
@@ -272,12 +291,12 @@ use syn::{
 /// Methods may use `Self::Name` at the *top level* of any parameter and of the return type,
 /// in these forms:
 ///
-/// - `Self::Name` (by value): the free function takes or returns the opaque struct by
+/// - `Self::Name` (by value): the dispatch method takes or returns the opaque struct by
 ///   value. A by-value parameter consumes the value, and it is dropped (or kept) by the
 ///   implementation.
-/// - `&Self::Name` and `&mut Self::Name` (parameters only): the free function takes a
+/// - `&Self::Name` and `&mut Self::Name` (parameters only): the dispatch method takes a
 ///   reference to the opaque struct.
-/// - `Pin<&Self::Name>` and `Pin<&mut Self::Name>` (parameters only): the free function
+/// - `Pin<&Self::Name>` and `Pin<&mut Self::Name>` (parameters only): the dispatch method
 ///   takes a pinned reference to the opaque struct, and the implementation receives a
 ///   pinned reference to its own value, at the address the caller pinned. Write `Pin` by
 ///   its bare name; it always means [`core::pin::Pin`], whatever `Pin` happens to be in
@@ -297,7 +316,7 @@ use syn::{
 ///
 /// ```
 /// unitrait::unitrait! {
-///     pub trait Session {
+///     pub trait SessionDriver {
 ///         /// Can be moved between threads, but not shared, and must not be moved once
 ///         /// it has been pinned. Duplicating one duplicates the implementation's state.
 ///         #[opaque(size = 64, align = 8)]
@@ -310,23 +329,25 @@ use syn::{
 ///         pub type Id: Copy + Send + Sync;
 ///
 ///         #[symbol = "_session_open"]
-///         pub fn session_open() -> Self::State;
+///         fn open() -> Self::State;
 ///
 ///         #[symbol = "_session_id"]
-///         pub fn session_id(state: &Self::State) -> Self::Id;
+///         fn id(state: &Self::State) -> Self::Id;
 ///     }
+///
+///     pub struct Session;
 ///
 ///     macro session_impl(path = $crate);
 /// }
 /// # struct MySession;
-/// # impl Session for MySession {
+/// # impl SessionDriver for MySession {
 /// #     type State = u64;
 /// #     type Id = u32;
-/// #     fn session_open() -> u64 { 7 }
-/// #     fn session_id(state: &u64) -> u32 { *state as u32 }
+/// #     fn open() -> u64 { 7 }
+/// #     fn id(state: &u64) -> u32 { *state as u32 }
 /// # }
 /// # session_impl!(MySession);
-/// # fn main() { let s = session_open(); assert_eq!(core::mem::size_of_val(&session_id(&s)), 4); }
+/// # fn main() { let s = Session::open(); assert_eq!(core::mem::size_of_val(&Session::id(&s)), 4); }
 /// ```
 ///
 /// The supported marker bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`,
@@ -371,6 +392,9 @@ use syn::{
 /// frob::frob_driver_impl!(MyDriver);
 /// ```
 ///
+/// The dispatch type implements the trait too, but it is the *caller* side: registering it as
+/// the implementation would make every call loop back into itself.
+///
 /// When implementing from within the defining crate itself, the implementation macro must be
 /// invoked by its bare name (textually scoped, like all `macro_rules!` macros), not through a
 /// `crate::` path: `#[macro_use]` on the defining module can be used to extend its textual
@@ -379,7 +403,7 @@ use syn::{
 /// # Name resolution in method signatures
 ///
 /// The method signatures are pasted verbatim both into the defining crate (for the trait and
-/// free functions) and into implementor crates (by the implementation macro). Therefore, the
+/// the dispatch type) and into implementor crates (by the implementation macro). Therefore, the
 /// types they name must resolve in both places. The implementation macro expands inside a
 /// scope with `use PATH::*;`, so this works out as long as every type named in the signatures
 /// is:
@@ -397,9 +421,9 @@ use syn::{
 ///
 /// # Linkage details
 ///
-/// Calls from the free functions to the implementation are done via `extern "Rust"` functions.
+/// Calls from the dispatch type to the implementation are done via `extern "Rust"` functions.
 ///
-/// For each method, the free function calls `extern "Rust" { fn "SYMBOL"(...); }`, and the
+/// For each method, the dispatch method calls `extern "Rust" { fn "SYMBOL"(...); }`, and the
 /// implementation macro exports `#[export_name = "SYMBOL"] fn(...)` which forwards to the
 /// trait implementation. The linker resolves the former to the latter. If no crate in the tree
 /// invokes the implementation macro, linking fails with an "undefined symbol" error; if more
@@ -437,6 +461,12 @@ struct UnitraitInput {
     name: Ident,
     opaques: Vec<OpaqueDecl>,
     methods: Vec<Method>,
+    /// Attributes written on the `struct` line, applied verbatim to the dispatch type.
+    dispatch_attrs: Vec<Attribute>,
+    /// The dispatch type's visibility, which its inherent methods share.
+    dispatch_vis: Visibility,
+    /// The dispatch type's name.
+    dispatch: Ident,
     mac_docs: Vec<Attribute>,
     mac_name: Ident,
     path: TokenStream,
@@ -447,7 +477,7 @@ struct OpaqueDecl {
     vis: Visibility,
     /// The associated type's name, e.g. `Context`.
     assoc: Ident,
-    /// The generated opaque struct's name: trait name + associated type name.
+    /// The generated opaque struct's name: dispatch type name + associated type name.
     opaque: Ident,
     /// The `#[opaque(size = N, align = M)]` attributes, in source order. Non-empty; at most
     /// the last one is unconditional.
@@ -605,7 +635,6 @@ fn parse_bounds(input: ParseStream) -> syn::Result<Bounds> {
 
 struct Method {
     docs: Vec<Attribute>,
-    vis: Visibility,
     unsafety: Option<Token![unsafe]>,
     name: Ident,
     symbol: LitStr,
@@ -886,7 +915,7 @@ impl Parse for UnitraitInput {
                 } = parse_bounds(&content)?;
                 if content.peek(Token![=]) {
                     return Err(content.error(format!(
-                        "the opaque type's name is derived automatically as `{name}{assoc}` (trait name + associated type name); remove the `= ...`"
+                        "the opaque type's name is derived automatically as the dispatch type's name followed by `{assoc}`; remove the `= ...`"
                     )));
                 }
                 content.parse::<Token![;]>()?;
@@ -949,7 +978,9 @@ impl Parse for UnitraitInput {
                 if opaques.iter().any(|o| o.assoc == assoc) {
                     return Err(syn::Error::new(assoc.span(), "duplicate associated type"));
                 }
-                let opaque = format_ident!("{name}{assoc}", span = assoc.span());
+                // Named after the dispatch type, which is parsed after the trait body; filled
+                // in below.
+                let opaque = assoc.clone();
                 opaques.push(OpaqueDecl {
                     docs,
                     vis: ivis,
@@ -961,6 +992,12 @@ impl Parse for UnitraitInput {
                     clone_symbol,
                 });
             } else {
+                if !matches!(ivis, Visibility::Inherited) {
+                    return Err(syn::Error::new(
+                        ivis.span(),
+                        "unitrait methods must not have a visibility; they are as visible as the dispatch type, so set the visibility on the `struct` line instead",
+                    ));
+                }
                 let unsafety: Option<Token![unsafe]> = content.parse()?;
                 content.parse::<Token![fn]>()?;
                 let fname: Ident = content.parse()?;
@@ -1032,7 +1069,6 @@ impl Parse for UnitraitInput {
                 };
                 methods.push(Method {
                     docs,
-                    vis: ivis,
                     unsafety,
                     name: fname,
                     symbol,
@@ -1040,6 +1076,26 @@ impl Parse for UnitraitInput {
                     ret,
                 });
             }
+        }
+
+        let dispatch_attrs = input.call(Attribute::parse_outer)?;
+        let dispatch_vis: Visibility = input.parse()?;
+        if !input.peek(Token![struct]) {
+            return Err(input.error(
+                "expected `struct NAME;`, naming the dispatch type callers use to reach the global implementation",
+            ));
+        }
+        input.parse::<Token![struct]>()?;
+        let dispatch: Ident = input.parse()?;
+        input.parse::<Token![;]>()?;
+        if dispatch == name {
+            return Err(syn::Error::new(
+                dispatch.span(),
+                "the dispatch type can't have the same name as the trait",
+            ));
+        }
+        for o in &mut opaques {
+            o.opaque = format_ident!("{dispatch}{}", o.assoc, span = o.assoc.span());
         }
 
         let mac_docs = only_docs(input.call(Attribute::parse_outer)?)?;
@@ -1064,6 +1120,9 @@ impl Parse for UnitraitInput {
             name,
             opaques,
             methods,
+            dispatch_attrs,
+            dispatch_vis,
+            dispatch,
             mac_docs,
             mac_name,
             path,
@@ -1240,7 +1299,7 @@ impl UnitraitInput {
         }
     }
 
-    /// The type to use for a slot in the free functions and extern declarations
+    /// The type to use for a slot in the dispatch methods and extern declarations
     /// (defining-crate side: opaque structs by bare name).
     fn caller_ty(&self, ty: &Type, slot: &Slot) -> TokenStream {
         match slot {
@@ -1302,6 +1361,9 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         name,
         opaques,
         methods,
+        dispatch_attrs,
+        dispatch_vis,
+        dispatch,
         mac_docs,
         mac_name,
         path,
@@ -1502,11 +1564,12 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
-    // The free functions (defining-crate side).
-    let free_fns = methods
+    // The dispatch type's inherent methods (defining-crate side): one per trait method,
+    // calling the global implementation through its extern symbol.
+    let dispatch_methods = methods
         .iter()
         .map(|m| {
-            let Method { docs, vis, unsafety, name, symbol, args, ret } = m;
+            let Method { docs, unsafety, name, symbol, args, ret } = m;
             let params = args
                 .iter()
                 .map(|(id, ty)| {
@@ -1533,11 +1596,61 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             Ok(quote! {
                 #(#docs)*
                 #[inline]
-                #vis #unsafety fn #name(#(#params),*) #ret_ty {
+                #dispatch_vis #unsafety fn #name(#(#params),*) #ret_ty {
                     unsafe extern "Rust" {
                         #[link_name = #symbol]
                         #extern_safe fn extern_fn(#(#params),*) #ret_ty;
                     }
+                    #call
+                }
+            })
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    // The dispatch type's impl of the trait (defining-crate side): each opaque associated
+    // type is its opaque struct, and each method forwards to the inherent method of the
+    // same name. That makes the dispatch type usable wherever an implementation of the
+    // trait is expected.
+    let dispatch_assocs = opaques.iter().map(|o| {
+        let OpaqueDecl { assoc, opaque, .. } = o;
+        quote!(type #assoc = #opaque;)
+    });
+    let dispatch_impl_methods = methods
+        .iter()
+        .map(|m| {
+            let Method {
+                unsafety,
+                name,
+                args,
+                ret,
+                ..
+            } = m;
+            let params = args
+                .iter()
+                .map(|(id, ty)| {
+                    let cty = input.caller_ty(ty, &input.classify(ty)?);
+                    Ok(quote!(#id: #cty))
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            let ret_ty = match ret {
+                None => quote!(),
+                Some(ty) => {
+                    let cty = input.caller_ty(ty, &input.classify(ty)?);
+                    quote!(-> #cty)
+                }
+            };
+            let argids = args.iter().map(|(id, _)| id);
+            // Inherent methods take precedence over trait methods in path resolution, so
+            // this reaches the inherent method above, not itself.
+            let call = quote!(<#dispatch>::#name(#(#argids),*));
+            let call = match unsafety {
+                None => call,
+                // SAFETY: forwarded to the caller, who called this `unsafe fn`.
+                Some(_) => quote!(unsafe { #call }),
+            };
+            Ok(quote! {
+                #[inline]
+                #unsafety fn #name(#(#params),*) #ret_ty {
                     #call
                 }
             })
@@ -1702,7 +1815,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             let call = quote!(<#tvar as #trait_qpath>::#name(#(#argids),*));
             let call = match unsafety {
                 None => call,
-                // SAFETY: forwarded to the caller through the `unsafe fn` free function
+                // SAFETY: forwarded to the caller through the `unsafe fn` dispatch method
                 // matching this method, which carries the trait method's safety contract.
                 Some(_) => quote!(unsafe { #call }),
             };
@@ -1755,7 +1868,17 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             #(#trait_methods)*
         }
 
-        #(#free_fns)*
+        #(#dispatch_attrs)*
+        #dispatch_vis struct #dispatch;
+
+        impl #dispatch {
+            #(#dispatch_methods)*
+        }
+
+        impl #name for #dispatch {
+            #(#dispatch_assocs)*
+            #(#dispatch_impl_methods)*
+        }
 
         #(#mac_docs)*
         #[macro_export]

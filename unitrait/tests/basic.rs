@@ -7,13 +7,13 @@ unitrait::unitrait! {
     pub trait Driver {
         /// Returns the current level.
         #[symbol = "_unitrait_test_level"]
-        pub fn level() -> u32;
+        fn level() -> u32;
 
         /// Sets the current level.
         #[symbol = "_unitrait_test_set_level"]
-        pub(crate) fn set_level(level: u32, doubled: bool);
+        fn set_level(level: u32, doubled: bool);
 
-        /// No args, no return value. No visibility: the free function is private.
+        /// No args, no return value.
         #[symbol = "_unitrait_test_poke"]
         fn poke();
 
@@ -23,8 +23,11 @@ unitrait::unitrait! {
         ///
         /// May be called at most once.
         #[symbol = "_unitrait_test_item"]
-        pub unsafe fn item(marker: &u8) -> &'static mut Item;
+        unsafe fn item(marker: &u8) -> &'static mut Item;
     }
+
+    /// The global test driver.
+    pub struct Frob;
 
     /// Set the global test driver.
     macro test_driver_impl(path = $crate);
@@ -56,12 +59,24 @@ impl Driver for MyDriver {
 test_driver_impl!(MyDriver);
 
 #[test]
-fn test_free_fns_dispatch_to_impl() {
-    assert_eq!(level(), 7);
-    set_level(10, true);
-    assert_eq!(level(), 20);
-    poke();
-    assert_eq!(level(), 21);
-    let item = unsafe { item(&0) };
+fn test_dispatch_type_dispatches_to_impl() {
+    assert_eq!(Frob::level(), 7);
+    Frob::set_level(10, true);
+    assert_eq!(Frob::level(), 20);
+    Frob::poke();
+    assert_eq!(Frob::level(), 21);
+    let item = unsafe { Frob::item(&0) };
     assert_eq!(item.0, 42);
+}
+
+fn via_trait<T: Driver>(level: u32) -> u32 {
+    T::set_level(level, false);
+    T::level()
+}
+
+#[test]
+fn test_dispatch_type_implements_trait() {
+    // The dispatch type is an implementation of the trait, usable in generic code.
+    assert_eq!(via_trait::<Frob>(5), 5);
+    assert_eq!(via_trait::<MyDriver>(6), 6);
 }

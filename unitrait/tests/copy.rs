@@ -2,7 +2,7 @@
 
 unitrait::unitrait! {
     /// A test trait handing out copyable opaque tokens.
-    pub trait Tokens {
+    pub trait TokensDriver {
         /// An opaque token. `Copy`, so it can't have a `Drop` bound and is never dropped.
         #[opaque(size = 8, align = 4)]
         pub type Token: Copy;
@@ -12,20 +12,22 @@ unitrait::unitrait! {
         pub type Small: Copy + Send + Sync;
 
         #[symbol = "_unitrait_test_token_new"]
-        pub fn token_new(v: u32) -> Self::Token;
+        fn token_new(v: u32) -> Self::Token;
 
         #[symbol = "_unitrait_test_token_get"]
-        pub fn token_get(t: Self::Token) -> u32;
+        fn token_get(t: Self::Token) -> u32;
 
         #[symbol = "_unitrait_test_token_peek"]
-        pub fn token_peek(t: &Self::Token) -> u32;
+        fn token_peek(t: &Self::Token) -> u32;
 
         #[symbol = "_unitrait_test_small_new"]
-        pub fn small_new(v: u32) -> Self::Small;
+        fn small_new(v: u32) -> Self::Small;
 
         #[symbol = "_unitrait_test_small_get"]
-        pub fn small_get(t: Self::Small) -> u32;
+        fn small_get(t: Self::Small) -> u32;
     }
+
+    pub struct Tokens;
 
     /// Set the global token implementation.
     macro test_tokens_impl(path = $crate);
@@ -39,7 +41,7 @@ struct MyToken {
     hi: u32,
 }
 
-impl Tokens for MyImpl {
+impl TokensDriver for MyImpl {
     type Token = MyToken;
     type Small = u32;
 
@@ -88,23 +90,23 @@ fn test_copy_opaque_has_no_drop_glue() {
 
 #[test]
 fn test_copy_opaque_round_trips() {
-    let t = token_new(0x1234);
+    let t = Tokens::token_new(0x1234);
     // `t` is `Copy`: passing it by value doesn't move it out.
-    assert_eq!(token_get(t), 0x1234);
-    assert_eq!(token_get(t), 0x1234);
-    assert_eq!(token_peek(&t), 0x1234);
+    assert_eq!(Tokens::token_get(t), 0x1234);
+    assert_eq!(Tokens::token_get(t), 0x1234);
+    assert_eq!(Tokens::token_peek(&t), 0x1234);
 
     let copy = t;
-    assert_eq!(token_get(copy), token_get(t));
+    assert_eq!(Tokens::token_get(copy), Tokens::token_get(t));
 
     #[allow(clippy::clone_on_copy)]
     let cloned = t.clone();
-    assert_eq!(token_get(cloned), 0x1234);
+    assert_eq!(Tokens::token_get(cloned), 0x1234);
 }
 
 #[test]
 fn test_copy_opaque_layout() {
     assert_eq!(core::mem::size_of::<TokensToken>(), 8);
     assert_eq!(core::mem::align_of::<TokensToken>(), 4);
-    assert_eq!(small_get(small_new(9)), 9);
+    assert_eq!(Tokens::small_get(Tokens::small_new(9)), 9);
 }

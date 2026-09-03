@@ -1,4 +1,4 @@
-error: the opaque type's name is derived automatically as `FooContext` (trait name + associated type name); remove the `= ...`
+error: the opaque type's name is derived automatically as the dispatch type's name followed by `Context`; remove the `= ...`
  --> tests/ui/type_with_equals.rs:5:26
   |
 5 |         pub type Context = FooContext;

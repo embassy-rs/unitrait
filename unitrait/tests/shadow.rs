@@ -33,7 +33,7 @@ pub mod core {}
 
 unitrait::unitrait! {
     /// A test trait defined with every relevant name shadowed.
-    pub trait Shadowed {
+    pub trait ShadowedDriver {
         /// An opaque type with every marker bound, in a scope where they're all shadowed.
         #[opaque(size = 16, align = 8)]
         #[drop_symbol = "_unitrait_test_shadow_ctx_drop"]
@@ -44,21 +44,23 @@ unitrait::unitrait! {
         pub type Token: Copy;
 
         #[symbol = "_unitrait_test_shadow_new"]
-        pub fn shadow_new(v: u32) -> Self::Context;
+        fn shadow_new(v: u32) -> Self::Context;
 
         /// Uses the shadowed `Pin`: it must still mean `core::pin::Pin`.
         #[symbol = "_unitrait_test_shadow_bump"]
-        pub fn shadow_bump(ctx: Pin<&mut Self::Context>) -> u32;
+        fn shadow_bump(ctx: Pin<&mut Self::Context>) -> u32;
 
         #[symbol = "_unitrait_test_shadow_get"]
-        pub fn shadow_get(ctx: Pin<&Self::Context>) -> u32;
+        fn shadow_get(ctx: Pin<&Self::Context>) -> u32;
 
         #[symbol = "_unitrait_test_shadow_token"]
-        pub fn shadow_token(v: u32) -> Self::Token;
+        fn shadow_token(v: u32) -> Self::Token;
 
         #[symbol = "_unitrait_test_shadow_token_get"]
-        pub fn shadow_token_get(t: Self::Token) -> u32;
+        fn shadow_token_get(t: Self::Token) -> u32;
     }
+
+    pub struct Shadowed;
 
     /// Set the global implementation.
     macro test_shadow_impl(path = $crate);
@@ -68,7 +70,7 @@ struct MyImpl;
 
 struct MyState(u32);
 
-impl Shadowed for MyImpl {
+impl ShadowedDriver for MyImpl {
     type Context = MyState;
     type Token = u32;
 
@@ -120,10 +122,10 @@ fn test_shadowed_bounds_mean_the_core_traits() {
 
 #[test]
 fn test_shadowed_names_still_dispatch() {
-    let mut ctx = ::core::pin::pin!(shadow_new(1));
-    assert_eq!(shadow_bump(ctx.as_mut()), 2);
-    assert_eq!(shadow_get(ctx.as_ref()), 2);
-    assert_eq!(shadow_token_get(shadow_token(7)), 7);
+    let mut ctx = ::core::pin::pin!(Shadowed::shadow_new(1));
+    assert_eq!(Shadowed::shadow_bump(ctx.as_mut()), 2);
+    assert_eq!(Shadowed::shadow_get(ctx.as_ref()), 2);
+    assert_eq!(Shadowed::shadow_token_get(Shadowed::shadow_token(7)), 7);
 }
 
 #[test]

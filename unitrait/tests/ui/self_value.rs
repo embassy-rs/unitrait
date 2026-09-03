@@ -1,8 +1,10 @@
 unitrait::unitrait! {
-    pub trait Foo {
+    pub trait FooDriver {
         #[symbol = "_ui_self_value"]
-        pub fn foo(self) -> u32;
+        fn foo(self) -> u32;
     }
+
+    pub struct Foo;
 
     macro foo_impl(path = $crate);
 }

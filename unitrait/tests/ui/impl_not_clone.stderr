@@ -1,45 +1,45 @@
 error[E0277]: the trait bound `NotClone: Clone` is not satisfied
-  --> tests/ui/impl_not_clone.rs:19:20
+  --> tests/ui/impl_not_clone.rs:21:20
    |
-19 |     type Context = NotClone;
+21 |     type Context = NotClone;
    |                    ^^^^^^^^ the trait `Clone` is not implemented for `NotClone`
    |
-note: required by a bound in `Foo::Context`
+note: required by a bound in `FooDriver::Context`
   --> tests/ui/impl_not_clone.rs:1:1
    |
  1 | / unitrait::unitrait! {
- 2 | |     pub trait Foo {
+ 2 | |     pub trait FooDriver {
  3 | |         #[opaque(size = 8, align = 4)]
  4 | |         #[clone_symbol = "_ui_impl_not_clone_clone"]
 ...  |
-11 | |     macro foo_impl(path = $crate);
-12 | | }
-   | |_^ required by this bound in `Foo::Context`
+13 | |     macro foo_impl(path = $crate);
+14 | | }
+   | |_^ required by this bound in `FooDriver::Context`
    = note: this error originates in the macro `unitrait::unitrait` (in Nightly builds, run with -Z macro-backtrace for more info)
 help: consider annotating `NotClone` with `#[derive(Clone)]`
    |
-14 + #[derive(Clone)]
-15 | pub struct NotClone(pub u32);
+16 + #[derive(Clone)]
+17 | pub struct NotClone(pub u32);
    |
 
 error[E0277]: the trait bound `NotClone: Clone` is not satisfied
   --> tests/ui/impl_not_clone.rs:1:1
    |
  1 | / unitrait::unitrait! {
- 2 | |     pub trait Foo {
+ 2 | |     pub trait FooDriver {
  3 | |         #[opaque(size = 8, align = 4)]
  4 | |         #[clone_symbol = "_ui_impl_not_clone_clone"]
 ...  |
-11 | |     macro foo_impl(path = $crate);
-12 | | }
+13 | |     macro foo_impl(path = $crate);
+14 | | }
    | |_^ the trait `Clone` is not implemented for `NotClone`
 ...
-26 |   foo_impl!(MyImpl);
+28 |   foo_impl!(MyImpl);
    |   ----------------- in this macro invocation
    |
    = note: this error originates in the macro `foo_impl` (in Nightly builds, run with -Z macro-backtrace for more info)
 help: consider annotating `NotClone` with `#[derive(Clone)]`
    |
-14 + #[derive(Clone)]
-15 | pub struct NotClone(pub u32);
+16 + #[derive(Clone)]
+17 | pub struct NotClone(pub u32);
    |

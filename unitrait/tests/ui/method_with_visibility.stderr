@@ -1,0 +1,5 @@
+error: unitrait methods must not have a visibility; they are as visible as the dispatch type, so set the visibility on the `struct` line instead
+ --> tests/ui/method_with_visibility.rs:4:9
+  |
+4 |         pub fn foo() -> u32;
+  |         ^^^

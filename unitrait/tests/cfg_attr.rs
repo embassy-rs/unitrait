@@ -3,7 +3,7 @@
 unitrait::unitrait! {
     /// A test trait whose opaque layouts depend on `cfg`s.
     #[symbol_prefix = "_unitrait_test_cfg_attr"]
-    pub trait Layouts {
+    pub trait LayoutsDriver {
         /// Several predicates hold; the first one wins, over the fallback too.
         #[cfg_attr(any(), opaque(size = 5, align = 1))]
         #[cfg_attr(all(), opaque(size = 6, align = 1))]
@@ -23,11 +23,13 @@ unitrait::unitrait! {
         #[cfg_attr(test, opaque(size = 5, align = 4))]
         pub type NoFallback: Copy;
 
-        pub fn first() -> Self::First;
-        pub fn fallback() -> Self::Fallback;
-        pub fn no_fallback() -> Self::NoFallback;
-        pub fn no_fallback_get(v: &Self::NoFallback) -> u64;
+        fn first() -> Self::First;
+        fn fallback() -> Self::Fallback;
+        fn no_fallback() -> Self::NoFallback;
+        fn no_fallback_get(v: &Self::NoFallback) -> u64;
     }
+
+    pub struct Layouts;
 
     /// Set the global implementation.
     macro layouts_impl(path = $crate);
@@ -35,7 +37,7 @@ unitrait::unitrait! {
 
 struct MyImpl;
 
-impl Layouts for MyImpl {
+impl LayoutsDriver for MyImpl {
     type First = [u8; 6];
     type Fallback = [u8; 7];
     // 8 bytes: fills the storage of `size = 5, align = 4` rounded up.
@@ -71,8 +73,8 @@ fn test_cfg_attr_layouts() {
 
 #[test]
 fn test_cfg_attr_dispatch() {
-    let _ = first();
-    let _ = fallback();
-    let v = no_fallback();
-    assert_eq!(no_fallback_get(&v), 0x1234_5678_9abc_def0);
+    let _ = Layouts::first();
+    let _ = Layouts::fallback();
+    let v = Layouts::no_fallback();
+    assert_eq!(Layouts::no_fallback_get(&v), 0x1234_5678_9abc_def0);
 }

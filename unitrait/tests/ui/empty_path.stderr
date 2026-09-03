@@ -1,5 +1,5 @@
 error: unexpected end of input, expected a path starting with `$crate`
- --> tests/ui/empty_path.rs:7:27
+ --> tests/ui/empty_path.rs:9:27
   |
-7 |     macro foo_impl(path = );
+9 |     macro foo_impl(path = );
   |                           ^

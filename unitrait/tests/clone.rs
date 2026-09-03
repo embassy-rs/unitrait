@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 unitrait::unitrait! {
     /// A test trait handing out cloneable opaque buffers.
-    pub trait Buffers {
+    pub trait BuffersDriver {
         /// A growable buffer. Cloning one clones the implementation's value.
         #[opaque(size = 32, align = 8)]
         #[drop_symbol = "_unitrait_test_buf_drop"]
@@ -18,23 +18,25 @@ unitrait::unitrait! {
         pub type Tag: Clone;
 
         #[symbol = "_unitrait_test_buf_new"]
-        pub fn buf_new(first: u32) -> Self::Buf;
+        fn buf_new(first: u32) -> Self::Buf;
 
         #[symbol = "_unitrait_test_buf_push"]
-        pub fn buf_push(b: &mut Self::Buf, v: u32);
+        fn buf_push(b: &mut Self::Buf, v: u32);
 
         #[symbol = "_unitrait_test_buf_sum"]
-        pub fn buf_sum(b: &Self::Buf) -> u32;
+        fn buf_sum(b: &Self::Buf) -> u32;
 
         #[symbol = "_unitrait_test_buf_len"]
-        pub fn buf_len(b: &Self::Buf) -> usize;
+        fn buf_len(b: &Self::Buf) -> usize;
 
         #[symbol = "_unitrait_test_tag_new"]
-        pub fn tag_new(v: u32) -> Self::Tag;
+        fn tag_new(v: u32) -> Self::Tag;
 
         #[symbol = "_unitrait_test_tag_get"]
-        pub fn tag_get(t: &Self::Tag) -> u32;
+        fn tag_get(t: &Self::Tag) -> u32;
     }
+
+    pub struct Buffers;
 
     /// Set the global buffer implementation.
     macro test_buffers_impl(path = $crate);
@@ -66,7 +68,7 @@ impl Drop for MyBuf {
     }
 }
 
-impl Buffers for MyImpl {
+impl BuffersDriver for MyImpl {
     type Buf = MyBuf;
     type Tag = u32;
 
@@ -109,18 +111,18 @@ fn test_clone_bound_is_implemented() {
 fn test_clone_goes_through_the_implementation() {
     let clones = CLONES.load(Ordering::Relaxed);
 
-    let mut a = buf_new(1);
-    buf_push(&mut a, 2);
+    let mut a = Buffers::buf_new(1);
+    Buffers::buf_push(&mut a, 2);
 
     let b = a.clone();
     assert_eq!(CLONES.load(Ordering::Relaxed), clones + 1);
 
     // A deep clone, not a copy of the opaque bytes: the two are independent.
-    buf_push(&mut a, 3);
-    assert_eq!(buf_len(&a), 3);
-    assert_eq!(buf_sum(&a), 6);
-    assert_eq!(buf_len(&b), 2);
-    assert_eq!(buf_sum(&b), 3);
+    Buffers::buf_push(&mut a, 3);
+    assert_eq!(Buffers::buf_len(&a), 3);
+    assert_eq!(Buffers::buf_sum(&a), 6);
+    assert_eq!(Buffers::buf_len(&b), 2);
+    assert_eq!(Buffers::buf_sum(&b), 3);
 }
 
 #[test]
@@ -130,22 +132,22 @@ fn test_clone_from_goes_through_clone() {
         DROPS.load(Ordering::Relaxed),
     );
 
-    let a = buf_new(7);
-    let mut b = buf_new(0);
+    let a = Buffers::buf_new(7);
+    let mut b = Buffers::buf_new(0);
 
     // The default `clone_from` is `*self = source.clone()`, so it clones through the
     // symbol and drops the overwritten value through the drop symbol.
     b.clone_from(&a);
     assert_eq!(CLONES.load(Ordering::Relaxed), clones + 1);
     assert_eq!(DROPS.load(Ordering::Relaxed), drops + 1);
-    assert_eq!(buf_sum(&b), 7);
+    assert_eq!(Buffers::buf_sum(&b), 7);
 }
 
 #[test]
 fn test_clones_are_dropped() {
     let drops = DROPS.load(Ordering::Relaxed);
     {
-        let a = buf_new(1);
+        let a = Buffers::buf_new(1);
         let _b = a.clone();
     }
     assert_eq!(DROPS.load(Ordering::Relaxed), drops + 2);
@@ -153,9 +155,9 @@ fn test_clones_are_dropped() {
 
 #[test]
 fn test_clone_without_drop() {
-    let t = tag_new(5);
+    let t = Buffers::tag_new(5);
     let u = t.clone();
-    assert_eq!(tag_get(&t), 5);
-    assert_eq!(tag_get(&u), 5);
+    assert_eq!(Buffers::tag_get(&t), 5);
+    assert_eq!(Buffers::tag_get(&u), 5);
     assert!(!core::mem::needs_drop::<BuffersTag>());
 }

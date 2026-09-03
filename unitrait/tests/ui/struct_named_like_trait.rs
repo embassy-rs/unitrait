@@ -1,7 +1,6 @@
 unitrait::unitrait! {
-    pub trait FooDriver {
-        #[opaque(size = 8, align = 4)]
-        #[symbol = "_ui_opaque_on_method"]
+    pub trait Foo {
+        #[symbol = "_ui_struct_named_like_trait"]
         fn foo() -> u32;
     }
 
