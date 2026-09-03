@@ -1,0 +1,5 @@
+error: only `opaque(size = N, align = M)` may be placed under `cfg_attr`
+ --> tests/ui/cfg_attr_not_opaque.rs:4:27
+  |
+4 |         #[cfg_attr(all(), drop_symbol = "_ui_cfg_attr_not_opaque_drop")]
+  |                           ^^^^^^^^^^^

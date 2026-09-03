@@ -1,0 +1,5 @@
+error: unexpected end of input, expected `#[cfg_attr(predicate, opaque(size = N, align = M))]`
+ --> tests/ui/cfg_attr_missing_attr.rs:3:25
+  |
+3 |         #[cfg_attr(all())]
+  |                         ^

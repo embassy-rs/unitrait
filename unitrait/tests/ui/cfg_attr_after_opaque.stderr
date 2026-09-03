@@ -1,0 +1,5 @@
+error: this `#[opaque]` can never apply: the unconditional `#[opaque]` attribute above it always applies first; move it above
+ --> tests/ui/cfg_attr_after_opaque.rs:4:27
+  |
+4 |         #[cfg_attr(all(), opaque(size = 16, align = 8))]
+  |                           ^^^^^^

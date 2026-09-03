@@ -4,7 +4,7 @@
 //! directly.
 
 use proc_macro2::{Punct, Spacing, Span, TokenStream, TokenTree};
-use quote::{ToTokens, format_ident, quote};
+use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -181,21 +181,67 @@ use syn::{
 /// ```
 ///
 /// Each opaque associated type declaration must be of the form `#[opaque(size = N, align = M)] [#[drop_symbol = "..."]] [#[clone_symbol = "..."]] [vis] type Name[: Bounds];`, where `N` and
-/// `M` are integer literals and `Bounds` is described under [marker
-/// bounds](#marker-bounds-on-opaque-types) and [dropping](#dropping-opaque-types). It emits:
+/// `M` are integer literals, `M` is a power of two, and `Bounds` is described under [marker
+/// bounds](#marker-bounds-on-opaque-types) and [dropping](#dropping-opaque-types). The
+/// `#[opaque]` attribute may also be given [several times under
+/// `cfg_attr`](#conditional-opaque-layouts). It emits:
 ///
 /// - `type Name;` in the trait, with the declared bounds. The implementation sets it to a
-///   type of its choosing, which must have size at most `N` and alignment at most `M`; the
-///   implementation macro verifies both at compile time.
+///   type of its choosing, which must have size at most `N` rounded up to a multiple of `M`,
+///   and alignment at most `M`; the implementation macro verifies both at compile time.
 /// - The opaque struct, named by concatenating the trait name and the associated type name
-///   (`ChecksumContext` above), laid out as `MaybeUninit<[u8; N]>` with alignment `M`. Its
-///   visibility is the one written on the `type` declaration (private if omitted, like free
-///   functions); note the implementation macro and the free functions name it, so it must
-///   be visible wherever the trait is implemented or the type is used.
+///   (`ChecksumContext` above), laid out as `MaybeUninit<[u8; N]>` with `N` rounded up to a
+///   multiple of `M`, and alignment `M`. Its visibility is the one written on the `type`
+///   declaration (private if omitted, like free functions); note the implementation macro
+///   and the free functions name it, so it must be visible wherever the trait is
+///   implemented or the type is used.
 ///
 /// An opaque struct value always holds an initialized value of the implementation's
 /// (unknown to the caller) associated type: the only way to obtain one is through a method
 /// that returns it. This is why methods taking opaque types are safe.
+///
+/// # Conditional opaque layouts
+///
+/// The size and alignment may depend on `cfg`s of the defining crate, by wrapping
+/// `#[opaque]` in `#[cfg_attr(...)]`:
+///
+/// ```
+/// unitrait::unitrait! {
+///     /// A rolling checksum.
+///     pub trait Checksum {
+///         /// Opaque storage for the implementation's checksum state.
+///         #[cfg_attr(feature = "wide-checksum", opaque(size = 64, align = 16))]
+///         #[cfg_attr(target_pointer_width = "16", opaque(size = 8, align = 2))]
+///         #[opaque(size = 16, align = 8)]
+///         pub type Context: Copy;
+///
+///         /// Returns a fresh checksum state.
+///         #[symbol = "_cksum_cfg_init"]
+///         pub fn cksum_init() -> Self::Context;
+///     }
+///
+///     /// Set the global checksum implementation.
+///     macro checksum_impl(path = $crate);
+/// }
+/// # struct Fletcher;
+/// # impl Checksum for Fletcher {
+/// #     type Context = (u32, u32);
+/// #     fn cksum_init() -> (u32, u32) { (0, 0) }
+/// # }
+/// # checksum_impl!(Fletcher);
+/// # fn main() { let _ = cksum_init(); }
+/// ```
+///
+/// The attributes are tried in source order and the first one whose predicate holds is
+/// used, so several predicates may hold at once. A plain `#[opaque]` is the fallback for
+/// when none holds; it must come last, and may be omitted, in which case no predicate
+/// holding is a compile error. Only `opaque` may be placed under `cfg_attr`. The predicates
+/// are evaluated in the crate defining the unitrait, and implementations check their type
+/// against whichever layout was chosen there.
+///
+/// The expansion selects the layout with [`core::cfg_select!`], available since Rust
+/// 1.95; declarations without `cfg_attr` don't use it. The expansion grows linearly with
+/// the number of attributes.
 ///
 /// # Dropping opaque types
 ///
@@ -403,8 +449,9 @@ struct OpaqueDecl {
     assoc: Ident,
     /// The generated opaque struct's name: trait name + associated type name.
     opaque: Ident,
-    size: LitInt,
-    align: LitInt,
+    /// The `#[opaque(size = N, align = M)]` attributes, in source order. Non-empty; at most
+    /// the last one is unconditional.
+    layouts: Vec<OpaqueLayout>,
     /// The marker traits declared as bounds on the associated type. The `Drop` bound is not
     /// one of them: it's recorded by `drop_symbol` instead.
     bounds: Vec<Marker>,
@@ -566,12 +613,27 @@ struct Method {
     ret: Option<Type>,
 }
 
+/// One `#[opaque(size = N, align = M)]` attribute, possibly wrapped in a `cfg_attr`.
+struct OpaqueLayout {
+    /// The `cfg_attr` predicate, verbatim; `None` for a plain `#[opaque]`.
+    cfg: Option<TokenStream>,
+    /// The declared alignment, as written.
+    align: LitInt,
+    /// The declared size rounded up to a multiple of the alignment: the opaque struct's
+    /// storage. Padding the storage itself, rather than letting `repr(align)` pad the
+    /// struct, keeps every byte of the struct inside `_data`, so the implementation's value
+    /// may use all of `size_of::<Opaque>()` and the implementation macro can check against
+    /// that instead of the literals, which it can't see when they depend on `cfg`s.
+    padded_size: LitInt,
+}
+
 struct SplitAttrs {
     docs: Vec<Attribute>,
     symbol: Option<LitStr>,
     drop_symbol: Option<LitStr>,
     clone_symbol: Option<LitStr>,
-    opaque: Option<(LitInt, LitInt)>,
+    /// The `#[opaque]` attributes in source order, see [`OpaqueDecl::layouts`].
+    opaque: Vec<OpaqueLayout>,
 }
 
 /// Parses the string literal of a `#[name = "..."]` attribute.
@@ -594,15 +656,60 @@ fn parse_str_attr(attr: &Attribute, name: &str) -> syn::Result<LitStr> {
     Ok(s.clone())
 }
 
+const CFG_ATTR_HELP: &str = "expected `#[cfg_attr(predicate, opaque(size = N, align = M))]`";
+
+/// Parses the `size = N, align = M` arguments of an `#[opaque(...)]` attribute, either
+/// written directly or under the `cfg_attr` predicate `cfg`.
+fn parse_opaque_args(list: &syn::MetaList, cfg: Option<TokenStream>) -> syn::Result<OpaqueLayout> {
+    let mut size = None;
+    let mut align = None;
+    list.parse_nested_meta(|meta| {
+        let lit: LitInt = meta.value()?.parse()?;
+        if meta.path.is_ident("size") {
+            size = Some(lit);
+        } else if meta.path.is_ident("align") {
+            align = Some(lit);
+        } else {
+            return Err(meta.error("expected `size` or `align`"));
+        }
+        Ok(())
+    })?;
+    let (Some(size), Some(align)) = (size, align) else {
+        return Err(syn::Error::new(
+            list.span(),
+            "expected `#[opaque(size = N, align = M)]`",
+        ));
+    };
+    let align_value: usize = align.base10_parse()?;
+    if !align_value.is_power_of_two() {
+        return Err(syn::Error::new(
+            align.span(),
+            "invalid alignment value: not a power of two",
+        ));
+    }
+    let size_value: usize = size.base10_parse()?;
+    let Some(padded) = size_value.checked_next_multiple_of(align_value) else {
+        return Err(syn::Error::new(
+            size.span(),
+            "size rounded up to a multiple of the alignment overflows `usize`",
+        ));
+    };
+    Ok(OpaqueLayout {
+        cfg,
+        align,
+        padded_size: LitInt::new(&padded.to_string(), size.span()),
+    })
+}
+
 /// Splits attributes into doc comments, an optional `#[symbol = "..."]`, optional
-/// `#[drop_symbol = "..."]` and `#[clone_symbol = "..."]`, and an optional
-/// `#[opaque(size = N, align = M)]`.
+/// `#[drop_symbol = "..."]` and `#[clone_symbol = "..."]`, and the
+/// `#[opaque(size = N, align = M)]` attributes, each optionally under a `cfg_attr`.
 fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
     let mut docs = vec![];
     let mut symbol = None;
     let mut drop_symbol = None;
     let mut clone_symbol = None;
-    let mut opaque = None;
+    let mut opaque: Vec<OpaqueLayout> = vec![];
     for attr in attrs {
         if attr.path().is_ident("doc") {
             docs.push(attr);
@@ -631,36 +738,63 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
             }
             clone_symbol = Some(parse_str_attr(&attr, "clone_symbol")?);
         } else if attr.path().is_ident("opaque") {
-            if opaque.is_some() {
+            if opaque.iter().any(|l| l.cfg.is_none()) {
                 return Err(syn::Error::new(
                     attr.span(),
                     "duplicate `#[opaque]` attribute",
                 ));
             }
-            let mut size = None;
-            let mut align = None;
-            attr.parse_nested_meta(|meta| {
-                let lit: LitInt = meta.value()?.parse()?;
-                if meta.path.is_ident("size") {
-                    size = Some(lit);
-                } else if meta.path.is_ident("align") {
-                    align = Some(lit);
-                } else {
-                    return Err(meta.error("expected `size` or `align`"));
+            opaque.push(parse_opaque_args(attr.meta.require_list()?, None)?);
+        } else if attr.path().is_ident("cfg_attr") {
+            // `cfg_attr(predicate, attr, attr, ...)`. The predicate is kept verbatim, to be
+            // re-emitted as a `cfg_select!` arm.
+            let (cfg, metas) = attr.parse_args_with(|input: ParseStream| {
+                let mut cfg = TokenStream::new();
+                while !input.is_empty() && !input.peek(Token![,]) {
+                    cfg.extend([input.parse::<TokenTree>()?]);
                 }
-                Ok(())
+                if cfg.is_empty() || input.is_empty() {
+                    return Err(input.error(CFG_ATTR_HELP));
+                }
+                input.parse::<Token![,]>()?;
+                let metas = Punctuated::<syn::Meta, Token![,]>::parse_terminated(input)?;
+                Ok((cfg, metas))
             })?;
-            let (Some(size), Some(align)) = (size, align) else {
-                return Err(syn::Error::new(
-                    attr.span(),
-                    "expected `#[opaque(size = N, align = M)]`",
-                ));
-            };
-            opaque = Some((size, align));
+            if metas.is_empty() {
+                return Err(syn::Error::new(attr.span(), CFG_ATTR_HELP));
+            }
+            let mut seen = false;
+            for meta in metas {
+                let list = match &meta {
+                    syn::Meta::List(list) if list.path.is_ident("opaque") => list,
+                    _ => {
+                        return Err(syn::Error::new(
+                            meta.span(),
+                            "only `opaque(size = N, align = M)` may be placed under `cfg_attr`",
+                        ));
+                    }
+                };
+                if seen {
+                    return Err(syn::Error::new(
+                        meta.span(),
+                        "duplicate `#[opaque]` attribute",
+                    ));
+                }
+                seen = true;
+                // The first `#[opaque]` whose predicate holds wins, so anything after an
+                // unconditional one can never apply.
+                if opaque.iter().any(|l| l.cfg.is_none()) {
+                    return Err(syn::Error::new(
+                        meta.span(),
+                        "this `#[opaque]` can never apply: the unconditional `#[opaque]` attribute above it always applies first; move it above",
+                    ));
+                }
+                opaque.push(parse_opaque_args(list, Some(cfg.clone()))?);
+            }
         } else {
             return Err(syn::Error::new(
                 attr.span(),
-                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]`, `#[drop_symbol = \"...\"]`, `#[clone_symbol = \"...\"]` or `#[opaque(size = N, align = M)]`",
+                "unexpected attribute; expected doc comments, `#[symbol = \"...\"]`, `#[drop_symbol = \"...\"]`, `#[clone_symbol = \"...\"]`, `#[opaque(size = N, align = M)]` or `#[cfg_attr(predicate, opaque(size = N, align = M))]`",
             ));
         }
     }
@@ -761,7 +895,7 @@ impl Parse for UnitraitInput {
                     symbol,
                     drop_symbol,
                     clone_symbol,
-                    opaque,
+                    opaque: layouts,
                 } = split_attrs(attrs)?;
                 if let Some(symbol) = symbol {
                     return Err(syn::Error::new(
@@ -806,12 +940,12 @@ impl Parse for UnitraitInput {
                         ));
                     }
                 };
-                let Some((size, align)) = opaque else {
+                if layouts.is_empty() {
                     return Err(syn::Error::new(
                         assoc.span(),
                         "opaque associated types require an `#[opaque(size = N, align = M)]` attribute",
                     ));
-                };
+                }
                 if opaques.iter().any(|o| o.assoc == assoc) {
                     return Err(syn::Error::new(assoc.span(), "duplicate associated type"));
                 }
@@ -821,8 +955,7 @@ impl Parse for UnitraitInput {
                     vis: ivis,
                     assoc,
                     opaque,
-                    size,
-                    align,
+                    layouts,
                     bounds: markers,
                     drop_symbol,
                     clone_symbol,
@@ -865,7 +998,7 @@ impl Parse for UnitraitInput {
                     clone_symbol,
                     opaque,
                 } = split_attrs(attrs)?;
-                if opaque.is_some() {
+                if !opaque.is_empty() {
                     return Err(syn::Error::new(
                         fname.span(),
                         "`#[opaque]` is only allowed on associated type declarations",
@@ -1185,9 +1318,9 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         let OpaqueDecl {
             docs,
             vis,
+            assoc,
             opaque,
-            size,
-            align,
+            layouts,
             bounds,
             drop_symbol,
             clone_symbol,
@@ -1252,22 +1385,66 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 }
             }
         });
-        quote! {
-            #(#docs)*
-            #[repr(C, align(#align))]
-            #vis struct #opaque {
-                _data: ::core::mem::MaybeUninit<[u8; #size]>,
-                // The opaque struct's auto traits must match those of the implementation's
-                // associated type, which the defining crate doesn't know. This zero-sized
-                // marker implements none of them, so they're all opted into explicitly
-                // above, guarded by the corresponding bound on the associated type.
-                _not_auto: ::core::marker::PhantomData<(
-                    *mut (),
-                    ::core::marker::PhantomPinned,
-                    &'static mut (),
-                    ::core::cell::UnsafeCell<()>,
-                )>,
+        // The struct definition for one layout. Everything else about the opaque type is
+        // layout-independent and emitted once, outside the `cfg_select!` below.
+        let struct_def = |align: &LitInt, padded_size: &LitInt| {
+            quote! {
+                #(#docs)*
+                #[repr(C, align(#align))]
+                #vis struct #opaque {
+                    // Covers the whole struct: `padded_size` is a multiple of the alignment.
+                    _data: ::core::mem::MaybeUninit<[u8; #padded_size]>,
+                    // The opaque struct's auto traits must match those of the
+                    // implementation's associated type, which the defining crate doesn't
+                    // know. This zero-sized marker implements none of them, so they're all
+                    // opted into explicitly below, guarded by the corresponding bound on the
+                    // associated type.
+                    _not_auto: ::core::marker::PhantomData<(
+                        *mut (),
+                        ::core::marker::PhantomPinned,
+                        &'static mut (),
+                        ::core::cell::UnsafeCell<()>,
+                    )>,
+                }
             }
+        };
+        let struct_def = match layouts.as_slice() {
+            [l] if l.cfg.is_none() => struct_def(&l.align, &l.padded_size),
+            // One `cfg_select!` arm per `#[opaque]`, in source order: the first predicate
+            // that holds wins, and the unconditional one, if any, is last and becomes the
+            // wildcard arm. This is linear in the number of attributes, unlike chaining
+            // `cfg_attr`s with `not(...)` of every previous predicate.
+            _ => {
+                let arms = layouts.iter().map(|l| {
+                    let body = struct_def(&l.align, &l.padded_size);
+                    match &l.cfg {
+                        Some(cfg) => quote!(#cfg => { #body }),
+                        None => quote!(_ => { #body }),
+                    }
+                });
+                // Without an unconditional `#[opaque]`, no predicate holding is an error.
+                // The struct is still defined, with a dummy layout, so the error is the
+                // only one reported.
+                let no_match = layouts.last().is_some_and(|l| l.cfg.is_some()).then(|| {
+                    let msg = format!(
+                        "no `#[opaque]` attribute applies to `{assoc}`: none of its `cfg_attr` predicates hold, and it has no unconditional `#[opaque(size = N, align = M)]` fallback"
+                    );
+                    let error = quote_spanned!(assoc.span() => ::core::compile_error!(#msg););
+                    let one = LitInt::new("1", assoc.span());
+                    let zero = LitInt::new("0", assoc.span());
+                    let body = struct_def(&one, &zero);
+                    quote!(_ => { #error #body })
+                });
+                quote! {
+                    ::core::cfg_select! {
+                        #(#arms)*
+                        #no_match
+                    }
+                }
+            }
+        };
+        quote! {
+            #struct_def
 
             #(#marker_impls)*
             #drop_impl
@@ -1370,7 +1547,7 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
     // Compile-time checks, and drop and clone shims, for the opaque types
     // (implementation-macro side).
     let opaque_shims = opaques.iter().map(|o| {
-        let OpaqueDecl { assoc, opaque, size, align, drop_symbol, clone_symbol, .. } = o;
+        let OpaqueDecl { assoc, opaque, drop_symbol, clone_symbol, .. } = o;
         let real = quote!(<#tvar as #trait_qpath>::#assoc);
         let qopaque = quote!(#path::#opaque);
         let drop_fn = format_ident!("__unitrait_drop_{}", assoc.to_string().to_lowercase());
@@ -1421,14 +1598,18 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
                 }
             }
         });
+        // The declared size and alignment may depend on `cfg`s of the defining crate, which
+        // can't be evaluated here, so the checks read them off the opaque struct instead.
+        // Its storage covers the whole struct (see `OpaqueLayout::padded_size`), so the
+        // implementation's value may use all of it.
         quote! {
             const _: () = {
                 ::core::assert!(
-                    ::core::mem::size_of::<#real>() <= #size,
+                    ::core::mem::size_of::<#real>() <= ::core::mem::size_of::<#qopaque>(),
                     "unitrait: the implementation's associated type is larger than its declared opaque size",
                 );
                 ::core::assert!(
-                    ::core::mem::align_of::<#real>() <= #align,
+                    ::core::mem::align_of::<#real>() <= ::core::mem::align_of::<#qopaque>(),
                     "unitrait: the implementation's associated type requires stricter alignment than its declared opaque alignment",
                 );
                 #no_drop_check

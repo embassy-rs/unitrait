@@ -42,6 +42,14 @@ fn ui() {
     t.compile_fail("tests/ui/empty_path.rs");
     t.compile_fail("tests/ui/align_not_power_of_two.rs");
 
+    // Errors in `cfg_attr`s on opaque associated types.
+    t.compile_fail("tests/ui/cfg_attr_no_match.rs");
+    t.compile_fail("tests/ui/cfg_attr_not_opaque.rs");
+    t.compile_fail("tests/ui/cfg_attr_after_opaque.rs");
+    t.compile_fail("tests/ui/cfg_attr_duplicate_opaque.rs");
+    t.compile_fail("tests/ui/cfg_attr_missing_attr.rs");
+    t.compile_fail("tests/ui/cfg_attr_on_method.rs");
+
     // Errors in the bounds of an opaque associated type.
     t.compile_fail("tests/ui/bound_unsupported.rs");
     t.compile_fail("tests/ui/bound_path.rs");
@@ -61,6 +69,7 @@ fn ui() {
     t.compile_fail("tests/ui/impl_not_implemented.rs");
     t.compile_fail("tests/ui/impl_too_big.rs");
     t.compile_fail("tests/ui/impl_overaligned.rs");
+    t.compile_fail("tests/ui/cfg_attr_impl_too_big.rs");
     t.compile_fail("tests/ui/impl_wrong_signature.rs");
     t.compile_fail("tests/ui/impl_not_a_type.rs");
     t.compile_fail("tests/ui/impl_not_send.rs");

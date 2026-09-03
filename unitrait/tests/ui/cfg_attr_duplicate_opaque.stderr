@@ -1,0 +1,5 @@
+error: duplicate `#[opaque]` attribute
+ --> tests/ui/cfg_attr_duplicate_opaque.rs:3:56
+  |
+3 |         #[cfg_attr(all(), opaque(size = 8, align = 4), opaque(size = 16, align = 8))]
+  |                                                        ^^^^^^

@@ -1,0 +1,16 @@
+error[E0080]: evaluation panicked: unitrait: the implementation's associated type is larger than its declared opaque size
+  --> tests/ui/cfg_attr_impl_too_big.rs:1:1
+   |
+ 1 | / unitrait::unitrait! {
+ 2 | |     pub trait Foo {
+ 3 | |         #[cfg_attr(any(), opaque(size = 64, align = 8))]
+ 4 | |         #[opaque(size = 8, align = 4)]
+...  |
+11 | |     macro foo_impl(path = $crate);
+12 | | }
+   | |_^ evaluation of `_::_` failed here
+...
+24 |   foo_impl!(MyImpl);
+   |   ----------------- in this macro invocation
+   |
+   = note: this error originates in the macro `$crate::panic::panic_2021` which comes from the expansion of the macro `foo_impl` (in Nightly builds, run with -Z macro-backtrace for more info)

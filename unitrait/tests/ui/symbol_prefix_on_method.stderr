@@ -1,4 +1,4 @@
-error: unexpected attribute; expected doc comments, `#[symbol = "..."]`, `#[drop_symbol = "..."]`, `#[clone_symbol = "..."]` or `#[opaque(size = N, align = M)]`
+error: unexpected attribute; expected doc comments, `#[symbol = "..."]`, `#[drop_symbol = "..."]`, `#[clone_symbol = "..."]`, `#[opaque(size = N, align = M)]` or `#[cfg_attr(predicate, opaque(size = N, align = M))]`
  --> tests/ui/symbol_prefix_on_method.rs:3:9
   |
 3 |         #[symbol_prefix = "_ui_prefix_on_method"]

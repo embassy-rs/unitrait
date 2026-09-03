@@ -1,0 +1,5 @@
+error: no `#[opaque]` attribute applies to `Context`: none of its `cfg_attr` predicates hold, and it has no unconditional `#[opaque(size = N, align = M)]` fallback
+ --> tests/ui/cfg_attr_no_match.rs:5:18
+  |
+5 |         pub type Context;
+  |                  ^^^^^^^
