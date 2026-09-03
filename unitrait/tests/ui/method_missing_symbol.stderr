@@ -1,4 +1,4 @@
-error: unitrait methods require a `#[symbol = "..."]` attribute
+error: unitrait methods require a `#[symbol = "..."]` attribute, or a `#[symbol_prefix = "..."]` attribute on the trait to derive one from the method name
  --> tests/ui/method_missing_symbol.rs:3:16
   |
 3 |         pub fn foo() -> u32;

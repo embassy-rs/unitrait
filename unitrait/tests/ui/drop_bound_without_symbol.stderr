@@ -1,4 +1,4 @@
-error: an opaque associated type with a `Drop` bound requires a `#[drop_symbol = "..."]` attribute naming the extern symbol for dropping the value in place
+error: an opaque associated type with a `Drop` bound requires a `#[drop_symbol = "..."]` attribute naming the extern symbol for dropping the value in place, or a `#[symbol_prefix = "..."]` attribute on the trait to derive one
  --> tests/ui/drop_bound_without_symbol.rs:4:27
   |
 4 |         pub type Context: Drop;

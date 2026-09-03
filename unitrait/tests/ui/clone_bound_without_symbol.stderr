@@ -1,4 +1,4 @@
-error: an opaque associated type with a `Clone` bound requires a `#[clone_symbol = "..."]` attribute naming the extern symbol for cloning the value
+error: an opaque associated type with a `Clone` bound requires a `#[clone_symbol = "..."]` attribute naming the extern symbol for cloning the value, or a `#[symbol_prefix = "..."]` attribute on the trait to derive one
  --> tests/ui/clone_bound_without_symbol.rs:4:27
   |
 4 |         pub type Context: Clone;

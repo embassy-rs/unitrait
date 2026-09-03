@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased - ReleaseDate
 
+- Added `#[symbol_prefix = "..."]` on the trait, deriving every symbol name: `PREFIX_method`
+  for methods, and `PREFIX_TypeName_drop` / `PREFIX_TypeName_clone` for opaque associated
+  types with a `Drop` or `Clone` bound. `#[symbol]`, `#[drop_symbol]` and `#[clone_symbol]`
+  become optional overrides; without a prefix they are required as before.
 - Added marker trait bounds on opaque associated types: `type Name: Send + Sync;`. The
   supported bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy`.
 - **Breaking, soundness fix**: opaque types no longer implement `Send`, `Sync`, `Unpin`,

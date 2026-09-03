@@ -1,4 +1,4 @@
-error: only doc comments are allowed here
+error: unexpected attribute; expected doc comments or `#[symbol_prefix = "..."]`
  --> tests/ui/attr_on_trait.rs:2:5
   |
 2 |     #[derive(Debug)]

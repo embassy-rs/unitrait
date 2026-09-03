@@ -8,6 +8,9 @@ fn ui() {
     t.compile_fail("tests/ui/attr_on_macro.rs");
     t.compile_fail("tests/ui/attr_on_method.rs");
     t.compile_fail("tests/ui/method_missing_symbol.rs");
+    t.compile_fail("tests/ui/duplicate_symbol_prefix.rs");
+    t.compile_fail("tests/ui/symbol_prefix_not_string.rs");
+    t.compile_fail("tests/ui/symbol_prefix_on_method.rs");
     t.compile_fail("tests/ui/duplicate_symbol_attr.rs");
     t.compile_fail("tests/ui/symbol_not_namevalue.rs");
     t.compile_fail("tests/ui/symbol_not_string.rs");

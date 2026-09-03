@@ -1,0 +1,5 @@
+error: duplicate `#[symbol_prefix]` attribute
+ --> tests/ui/duplicate_symbol_prefix.rs:3:5
+  |
+3 |     #[symbol_prefix = "_ui_dup_prefix_b"]
+  |     ^

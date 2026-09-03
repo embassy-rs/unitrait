@@ -1,0 +1,5 @@
+error: expected a string literal
+ --> tests/ui/symbol_prefix_not_string.rs:2:23
+  |
+2 |     #[symbol_prefix = 42]
+  |                       ^^

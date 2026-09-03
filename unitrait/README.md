@@ -54,6 +54,33 @@ frob::frob_driver_impl!(MyDriver);
 
 Now `frob::level()` works from any crate in the tree.
 
+## Symbol names
+
+Symbol names must be unique across the whole program, so prefix them with your
+crate's name and version. Instead of writing each one out, a
+`#[symbol_prefix = "..."]` attribute on the trait derives them all:
+
+```rust,ignore
+unitrait::unitrait! {
+    #[symbol_prefix = "_frob_v1"]
+    pub trait Driver {
+        /// Uses `_frob_v1_level`.
+        pub fn level() -> u32;
+
+        /// Overridden, so it uses `_frob_legacy_reset`.
+        #[symbol = "_frob_legacy_reset"]
+        pub fn reset();
+    }
+
+    macro frob_driver_impl(path = $crate);
+}
+```
+
+Methods derive `PREFIX_method_name`, and opaque associated types derive
+`PREFIX_TypeName_drop` and `PREFIX_TypeName_clone`. A `#[symbol]`,
+`#[drop_symbol]` or `#[clone_symbol]` attribute overrides one derived name.
+Without a prefix, every symbol must be written out explicitly.
+
 ## Opaque associated types
 
 A unitrait may declare _opaque_ associated types, letting callers hold

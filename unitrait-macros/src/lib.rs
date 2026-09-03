@@ -65,7 +65,8 @@ use syn::{
 /// - must not have a `self` parameter. If the implementation needs state, it can store it
 ///   in `static`s, or in a [context](#opaque-associated-types) allocated by the caller.
 /// - must each have a `#[symbol = "..."]` attribute specifying the extern symbol name used
-///   for that method. Symbol names must be unique across the program: prefix them
+///   for that method, unless the trait carries a [`#[symbol_prefix = "..."]`](#symbol-names)
+///   attribute to derive one. Symbol names must be unique across the program: prefix them
 ///   with your crate's name and version. Changing a method's symbol name or signature is an
 ///   ABI-breaking change between the defining crate and implementor crates.
 /// - may be `unsafe`. The corresponding free function will be `unsafe` too.
@@ -79,6 +80,56 @@ use syn::{
 /// other crates, starting with `$crate` — e.g. `$crate` if invoked at the crate root, or
 /// `$crate::foo::bar` if invoked in the module `foo::bar`. It's used by the implementation
 /// macro to name the trait, so the module must be publicly reachable.
+///
+/// # Symbol names
+///
+/// Every extern symbol a unitrait uses can be written out one by one, as above, or derived
+/// from a single `#[symbol_prefix = "..."]` attribute on the trait:
+///
+/// ```
+/// unitrait::unitrait! {
+///     /// A driver for the frobnicator.
+///     #[symbol_prefix = "_frob_v1"]
+///     pub trait Driver {
+///         /// Uses the symbol `_frob_v1_Context_drop`.
+///         #[opaque(size = 8, align = 8)]
+///         pub type Context: Drop;
+///
+///         /// Uses the symbol `_frob_v1_level`.
+///         pub fn level(ctx: &Self::Context) -> u32;
+///
+///         /// Overridden: uses `_frob_legacy_reset`, not `_frob_v1_reset`.
+///         #[symbol = "_frob_legacy_reset"]
+///         pub fn reset(ctx: &mut Self::Context);
+///     }
+///
+///     /// Set the global frobnicator driver.
+///     macro frob_driver_impl(path = $crate);
+/// }
+/// # struct MyDriver;
+/// # struct MyCtx(u32);
+/// # impl Drop for MyCtx { fn drop(&mut self) {} }
+/// # impl Driver for MyDriver {
+/// #     type Context = MyCtx;
+/// #     fn level(ctx: &MyCtx) -> u32 { ctx.0 }
+/// #     fn reset(ctx: &mut MyCtx) { ctx.0 = 0; }
+/// # }
+/// # frob_driver_impl!(MyDriver);
+/// # fn main() {}
+/// ```
+///
+/// With a prefix, the derived names are:
+///
+/// - `PREFIX_method_name` for each method.
+/// - `PREFIX_TypeName_drop` and `PREFIX_TypeName_clone` for each [opaque associated
+///   type](#opaque-associated-types) with a `Drop` or `Clone` bound. The associated type's
+///   name is used as written, so it keeps its capitalization.
+///
+/// A `#[symbol = "..."]`, `#[drop_symbol = "..."]` or `#[clone_symbol = "..."]` attribute
+/// written on an item overrides the derived name for that one symbol. Without a prefix on the
+/// trait, every symbol must be written out explicitly. Derived names are as much a part of
+/// the ABI as explicit ones: renaming the trait's prefix, a method, or an associated type is
+/// an ABI-breaking change.
 ///
 /// # Opaque associated types
 ///
@@ -314,6 +365,10 @@ use syn::{
 /// the implementation macro additionally exports its drop symbol, as a function dropping the
 /// implementation's value in place; the opaque struct's `Drop` impl calls it. A `Clone` bound
 /// works the same way, with a function cloning the implementation's value.
+///
+/// Symbols derived from a `#[symbol_prefix = "..."]` are exactly as real as explicitly named
+/// ones: nothing about the prefix survives into the generated code beyond the names it
+/// produces.
 ///
 /// Because the contract between the two sides is just the symbol name and signature, crates
 /// may define and implement the unitrait through *different versions* of the defining crate
@@ -618,6 +673,51 @@ fn split_attrs(attrs: Vec<Attribute>) -> syn::Result<SplitAttrs> {
     })
 }
 
+/// Splits the trait's attributes into doc comments and an optional
+/// `#[symbol_prefix = "..."]`.
+fn split_trait_attrs(attrs: Vec<Attribute>) -> syn::Result<(Vec<Attribute>, Option<LitStr>)> {
+    let mut docs = vec![];
+    let mut prefix = None;
+    for attr in attrs {
+        if attr.path().is_ident("doc") {
+            docs.push(attr);
+        } else if attr.path().is_ident("symbol_prefix") {
+            if prefix.is_some() {
+                return Err(syn::Error::new(
+                    attr.span(),
+                    "duplicate `#[symbol_prefix]` attribute",
+                ));
+            }
+            prefix = Some(parse_str_attr(&attr, "symbol_prefix")?);
+        } else {
+            return Err(syn::Error::new(
+                attr.span(),
+                "unexpected attribute; expected doc comments or `#[symbol_prefix = \"...\"]`",
+            ));
+        }
+    }
+    Ok((docs, prefix))
+}
+
+/// The symbol for an opaque associated type's `drop` or `clone` function, derived from the
+/// trait's `#[symbol_prefix = "..."]`. Fails with `missing` if there is no prefix, spanned at
+/// the bound that requires the symbol.
+fn assoc_symbol(
+    prefix: &Option<LitStr>,
+    assoc: &Ident,
+    what: &str,
+    span: Span,
+    missing: &str,
+) -> syn::Result<LitStr> {
+    match prefix {
+        Some(prefix) => Ok(LitStr::new(
+            &format!("{}_{assoc}_{what}", prefix.value()),
+            span,
+        )),
+        None => Err(syn::Error::new(span, missing)),
+    }
+}
+
 fn only_docs(attrs: Vec<Attribute>) -> syn::Result<Vec<Attribute>> {
     if let Some(attr) = attrs.iter().find(|a| !a.path().is_ident("doc")) {
         return Err(syn::Error::new(
@@ -630,7 +730,7 @@ fn only_docs(attrs: Vec<Attribute>) -> syn::Result<Vec<Attribute>> {
 
 impl Parse for UnitraitInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let trait_docs = only_docs(input.call(Attribute::parse_outer)?)?;
+        let (trait_docs, symbol_prefix) = split_trait_attrs(input.call(Attribute::parse_outer)?)?;
         let vis: Visibility = input.parse()?;
         input.parse::<Token![trait]>()?;
         let name: Ident = input.parse()?;
@@ -671,37 +771,41 @@ impl Parse for UnitraitInput {
                 }
                 // The `Drop` bound decides whether the opaque struct has drop glue; the
                 // attribute only names the symbol to drop through. The two must agree.
-                match (drop_bound, &drop_symbol) {
-                    (Some(_), Some(_)) | (None, None) => {}
-                    (Some(span), None) => {
-                        return Err(syn::Error::new(
-                            span,
-                            "an opaque associated type with a `Drop` bound requires a `#[drop_symbol = \"...\"]` attribute naming the extern symbol for dropping the value in place",
-                        ));
-                    }
+                let drop_symbol = match (drop_bound, drop_symbol) {
+                    (Some(_), symbol @ Some(_)) => symbol,
+                    (None, None) => None,
+                    (Some(span), None) => Some(assoc_symbol(
+                        &symbol_prefix,
+                        &assoc,
+                        "drop",
+                        span,
+                        "an opaque associated type with a `Drop` bound requires a `#[drop_symbol = \"...\"]` attribute naming the extern symbol for dropping the value in place, or a `#[symbol_prefix = \"...\"]` attribute on the trait to derive one",
+                    )?),
                     (None, Some(drop_symbol)) => {
                         return Err(syn::Error::new(
                             drop_symbol.span(),
                             "an opaque associated type without a `Drop` bound has no drop glue, so it must not have a `#[drop_symbol = \"...\"]` attribute; add a `Drop` bound to give it one",
                         ));
                     }
-                }
+                };
                 // Same for `Clone`: the bound decides, the attribute names the symbol.
-                match (clone_bound, &clone_symbol) {
-                    (Some(_), Some(_)) | (None, None) => {}
-                    (Some(span), None) => {
-                        return Err(syn::Error::new(
-                            span,
-                            "an opaque associated type with a `Clone` bound requires a `#[clone_symbol = \"...\"]` attribute naming the extern symbol for cloning the value",
-                        ));
-                    }
+                let clone_symbol = match (clone_bound, clone_symbol) {
+                    (Some(_), symbol @ Some(_)) => symbol,
+                    (None, None) => None,
+                    (Some(span), None) => Some(assoc_symbol(
+                        &symbol_prefix,
+                        &assoc,
+                        "clone",
+                        span,
+                        "an opaque associated type with a `Clone` bound requires a `#[clone_symbol = \"...\"]` attribute naming the extern symbol for cloning the value, or a `#[symbol_prefix = \"...\"]` attribute on the trait to derive one",
+                    )?),
                     (None, Some(clone_symbol)) => {
                         return Err(syn::Error::new(
                             clone_symbol.span(),
                             "an opaque associated type without a `Clone` bound can't be cloned, so it must not have a `#[clone_symbol = \"...\"]` attribute; add a `Clone` bound to give it one",
                         ));
                     }
-                }
+                };
                 let Some((size, align)) = opaque else {
                     return Err(syn::Error::new(
                         assoc.span(),
@@ -779,11 +883,19 @@ impl Parse for UnitraitInput {
                         "`#[clone_symbol]` is only allowed on opaque associated type declarations",
                     ));
                 }
-                let Some(symbol) = symbol else {
-                    return Err(syn::Error::new(
-                        fname.span(),
-                        "unitrait methods require a `#[symbol = \"...\"]` attribute",
-                    ));
+                let symbol = match symbol {
+                    Some(symbol) => symbol,
+                    None => match &symbol_prefix {
+                        Some(prefix) => {
+                            LitStr::new(&format!("{}_{fname}", prefix.value()), fname.span())
+                        }
+                        None => {
+                            return Err(syn::Error::new(
+                                fname.span(),
+                                "unitrait methods require a `#[symbol = \"...\"]` attribute, or a `#[symbol_prefix = \"...\"]` attribute on the trait to derive one from the method name",
+                            ));
+                        }
+                    },
                 };
                 methods.push(Method {
                     docs,
