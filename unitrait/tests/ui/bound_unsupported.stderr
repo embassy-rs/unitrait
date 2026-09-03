@@ -1,5 +1,5 @@
-error: an opaque associated type with a `Clone` bound requires a `#[clone_symbol = "..."]` attribute naming the extern symbol for cloning the value, or a `#[symbol_prefix = "..."]` attribute on the trait to derive one
- --> tests/ui/bound_unsupported.rs:5:27
+error: only `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`, `Copy`, `Clone` and `Drop` are allowed as bounds on an opaque associated type, written by their bare names
+ --> tests/ui/bound_unsupported.rs:4:27
   |
-5 |         pub type Context: Clone + Drop;
-  |                           ^^^^^
+4 |         pub type Context: Default;
+  |                           ^^^^^^^
