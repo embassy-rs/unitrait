@@ -7,39 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 
-## Unreleased - ReleaseDate
+## 1.2.0 - ReleaseDate
 
-- Added `#[symbol_prefix = "..."]` on the trait, deriving every symbol name: `PREFIX_method`
-  for methods, and `PREFIX_TypeName_drop` / `PREFIX_TypeName_clone` for opaque associated
-  types with a `Drop` or `Clone` bound. `#[symbol]`, `#[drop_symbol]` and `#[clone_symbol]`
-  become optional overrides; without a prefix they are required as before.
-- Added marker trait bounds on opaque associated types: `type Name: Send + Sync;`. The
-  supported bounds are `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy`.
-- **Breaking, soundness fix**: opaque types no longer implement `Send`, `Sync`, `Unpin`,
-  `UnwindSafe` or `RefUnwindSafe` unless declared as a bound on the associated type.
-  Previously they implemented all of them unconditionally, regardless of what the
-  implementation's associated type implemented, which let safe code send a `!Send`
-  implementation value across threads.
-- Added support for `Pin<&Self::Name>` and `Pin<&mut Self::Name>` method parameters.
-- Added the `Drop` bound on opaque associated types: `type Name: Send + Drop;`. It declares
-  that the opaque type has drop glue, and requires a `#[drop_symbol = "..."]` attribute
-  naming the symbol to drop through. It's mutually exclusive with `Copy`.
-- Added the `Clone` bound on opaque associated types. It requires a
-  `#[clone_symbol = "..."]` attribute, and `clone` dispatches through that symbol, since only
-  the implementation can duplicate a value of a type the caller can't see. `clone_from` is
-  left at its default, so it goes through `clone` too. It's mutually exclusive with `Copy`,
-  which already provides `Clone`.
-- **Breaking**: an opaque associated type without a `Drop` bound now has no `Drop` impl, and
-  the implementation macro checks at compile time that the implementation's associated type
-  has no drop glue. Previously every non-`Copy` opaque type had drop glue.
-- **Breaking**: opaque associated types now name their drop symbol with
-  `#[drop_symbol = "..."]` instead of `#[symbol = "..."]`, which is now rejected on them.
-  `#[symbol = "..."]` keeps its meaning on methods, and is now the only place it's allowed.
-
-## 1.1.0 - 2026-08-26
-
-- Added support for associated types.
+- Added opaque associated types: `#[opaque(size = N, align = M)] type Name;` declares a type
+  the caller sees as opaque bytes of a fixed maximum size and alignment, while the
+  implementation picks the real type.
+  - Methods may take one as `Self::Name`, `&Self::Name`, `&mut Self::Name`, `Pin<&Self::Name>` or `Pin<&mut Self::Name>`.
+  - Methods may return one by value only.
+  - The implementation macro checks the size and alignment at compile time.
+  - `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` may be declared as bounds.
+  - A `Drop` bound gives the opaque type drop glue, dropped through its `#[drop_symbol = "..."]`.
+  - A `Clone` bound makes it cloneable through its `#[clone_symbol = "..."]`.
+- Added `#[symbol_prefix = "..."]` on the trait, deriving every symbol name and making `#[symbol]`, `#[drop_symbol]` and `#[clone_symbol]` optional overrides.
 - Reimplemented as a proc macro.
+
+## 1.1.0 - 2026-08-26 **YANKED**
+
+Yanked: its opaque associated types were unsound, since they implemented every auto trait
+regardless of what the implementation's associated type implemented, which let safe code
+send a `!Send` implementation value across threads. Use 1.2.0, which contains everything
+this release added.
 
 ## 1.0.0 - 2026-08-12
 
