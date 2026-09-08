@@ -288,8 +288,7 @@ use syn::{
 /// Adding or removing it is an ABI-breaking change, since the two sides would then disagree
 /// on whether the drop symbol is exported and called.
 ///
-/// Methods may use `Self::Name` at the *top level* of any parameter and of the return type,
-/// in these forms:
+/// Methods may use `Self::Name` in any parameter and in the return type, in these forms:
 ///
 /// - `Self::Name` (by value): the dispatch method takes or returns the opaque struct by
 ///   value. A by-value parameter consumes the value, and it is dropped (or kept) by the
@@ -298,15 +297,31 @@ use syn::{
 ///   reference to the opaque struct.
 /// - `Pin<&Self::Name>` and `Pin<&mut Self::Name>` (parameters only): the dispatch method
 ///   takes a pinned reference to the opaque struct, and the implementation receives a
-///   pinned reference to its own value, at the address the caller pinned. Write `Pin` by
-///   its bare name; it always means [`core::pin::Pin`], whatever `Pin` happens to be in
-///   scope, and is rewritten to its absolute path everywhere it's emitted.
+///   pinned reference to its own value, at the address the caller pinned.
 ///
-/// Except for that rewriting of `Pin`, they appear in the trait exactly as written, so
-/// implementations are ordinary safe code. Nested uses (`Option<Self::Name>`,
-/// `&[Self::Name]`, ...) are rejected at compile time: they cannot be bridged across the
-/// extern symbol, since the caller-side and implementation-side types are not
-/// layout-compatible beyond the top level.
+/// Any of these may also be nested, to any depth, inside `Option`, `Result`, tuples and
+/// arrays, as in `Option<Self::Name>`, `Result<(Self::A, u32), Self::B>`,
+/// `[Option<&mut Self::Name>; 4]` or `Option<Pin<&mut Self::Name>>`. The dispatch method
+/// takes or returns the same composite of the opaque structs, and the implementation macro
+/// takes the composite apart and rebuilds it around the converted values: an `Option` costs
+/// a `match` and an array a `map`, on top of the moves a by-value opaque costs anyway. A
+/// composite containing a borrowed opaque type is, like the borrow itself, parameter-only.
+///
+/// Write `Option`, `Result` and `Pin` by their bare names. Around an opaque type they always
+/// mean [`core::option::Option`], [`core::result::Result`] and [`core::pin::Pin`], whatever
+/// those names happen to be in scope, and are rewritten to their absolute paths everywhere
+/// they're emitted, the trait itself included: an implementation in a scope that shadows
+/// one of them must spell out the absolute path. Away from opaque types, a signature is
+/// emitted exactly as written and means whatever it means in scope, so implementations are
+/// ordinary safe code.
+///
+/// Anything else is rejected at compile time, since it can't be bridged across the extern
+/// symbol: opaque types inside other generic types (`Box<Self::Name>`, `Vec<Self::Name>`, a
+/// generic type of your own), and references to composites (`&[Self::Name]`,
+/// `&Option<Self::Name>`, `&mut [Self::Name; 4]`). The opaque struct is only an upper bound
+/// on the implementation's type, so a slice or array of one doesn't have the stride of a
+/// slice or array of the other, and `Option`s and tuples of the two need not share a layout
+/// at all. Pass such composites by value instead.
 ///
 /// # Marker bounds on opaque types
 ///
@@ -430,7 +445,8 @@ use syn::{
 ///
 /// For opaque associated types, both sides of the symbol pass the opaque struct; the exported
 /// functions cast it to the implementation's associated type (sound thanks to the size/align
-/// checks and the always-initialized invariant). For each opaque type with a `Drop` bound,
+/// checks and the always-initialized invariant), taking apart and rebuilding any `Option`,
+/// `Result`, tuple or array around it. For each opaque type with a `Drop` bound,
 /// the implementation macro additionally exports its drop symbol, as a function dropping the
 /// implementation's value in place; the opaque struct's `Drop` impl calls it. A `Clone` bound
 /// works the same way, with a function cloning the implementation's value.
@@ -1129,29 +1145,104 @@ impl Parse for UnitraitInput {
     }
 }
 
-/// How a method uses a type slot (one parameter, or the return type).
-enum Slot {
-    /// An ordinary type, containing no `Self`.
-    Plain,
-    /// `Self::Name` by value.
-    Value(usize),
-    /// `&Self::Name`.
-    Ref(usize),
-    /// `&mut Self::Name`.
-    RefMut(usize),
-    /// `Pin<&Self::Name>`.
-    PinRef(usize),
-    /// `Pin<&mut Self::Name>`.
-    PinRefMut(usize),
+/// How a method uses a type slot (one parameter, or the return type), as far as opaque
+/// associated types are concerned.
+///
+/// A composite is only built when an opaque associated type appears somewhere inside it; a
+/// type with no `Self` in it is [`Plain`](Shape::Plain), however it is spelled.
+enum Shape {
+    /// A type containing no `Self`, passed through verbatim.
+    Plain(Type),
+    /// An opaque associated type, by value or borrowed.
+    Opaque {
+        /// Index into [`UnitraitInput::opaques`].
+        index: usize,
+        mode: Mode,
+        /// The span of the use, for errors about it.
+        span: Span,
+    },
+    /// `Option<T>`, with an opaque associated type somewhere in `T`.
+    Option(Span, Box<Shape>),
+    /// `Result<T, E>`, with an opaque associated type somewhere in `T` or `E`.
+    Result(Span, Box<Shape>, Box<Shape>),
+    /// A tuple, with an opaque associated type somewhere in an element.
+    Tuple(Span, Vec<Shape>),
+    /// `[T; N]`, with an opaque associated type somewhere in `T`. The length is kept as
+    /// written.
+    Array(Span, Box<Shape>, Expr),
 }
 
-impl Slot {
-    /// Whether the slot borrows an opaque value, and therefore can't be returned.
-    fn is_borrow(&self) -> bool {
-        matches!(
-            self,
-            Slot::Ref(_) | Slot::RefMut(_) | Slot::PinRef(_) | Slot::PinRefMut(_)
-        )
+/// How an opaque associated type is used at a leaf of a [`Shape`].
+#[derive(Clone, Copy)]
+enum Mode {
+    /// `Self::Name`.
+    Value,
+    /// `&Self::Name`.
+    Ref,
+    /// `&mut Self::Name`.
+    RefMut,
+    /// `Pin<&Self::Name>`.
+    PinRef,
+    /// `Pin<&mut Self::Name>`.
+    PinRefMut,
+}
+
+impl Shape {
+    /// The span of the first borrowed opaque associated type (`&`, `&mut` or `Pin`) in the
+    /// shape. A borrow can't be returned: the implementation's value is smaller than the
+    /// opaque struct in general, so a reference to it can't be read as one to the opaque
+    /// struct, and there'd be nothing to tie its lifetime to anyway.
+    fn find_borrow(&self) -> Option<Span> {
+        match self {
+            Shape::Plain(_)
+            | Shape::Opaque {
+                mode: Mode::Value, ..
+            } => None,
+            Shape::Opaque { span, .. } => Some(*span),
+            Shape::Option(_, inner) | Shape::Array(_, inner, _) => inner.find_borrow(),
+            Shape::Result(_, ok, err) => ok.find_borrow().or_else(|| err.find_borrow()),
+            Shape::Tuple(_, elems) => elems.iter().find_map(Shape::find_borrow),
+        }
+    }
+
+    /// Renders the shape as a type, spelling each opaque leaf with `leaf` (given its index
+    /// and the span of its use) wrapped in `&`, `&mut` or `Pin` as the leaf's mode says.
+    ///
+    /// `Option`, `Result` and `Pin` are always spelled by their absolute `core` paths, so a
+    /// type of the same name in scope in either the defining or the implementing crate
+    /// can't change what the generated code means. Plain types are emitted verbatim.
+    /// Everything is emitted at the span of the type it was written as, so compiler
+    /// diagnostics about a signature point into the trait as written.
+    fn render(&self, leaf: &dyn Fn(usize, Span) -> TokenStream) -> TokenStream {
+        match self {
+            Shape::Plain(ty) => ty.to_token_stream(),
+            Shape::Opaque { index, mode, span } => {
+                let t = leaf(*index, *span);
+                match mode {
+                    Mode::Value => t,
+                    Mode::Ref => quote_spanned!(*span=> &#t),
+                    Mode::RefMut => quote_spanned!(*span=> &mut #t),
+                    Mode::PinRef => quote_spanned!(*span=> ::core::pin::Pin<&#t>),
+                    Mode::PinRefMut => quote_spanned!(*span=> ::core::pin::Pin<&mut #t>),
+                }
+            }
+            Shape::Option(span, inner) => {
+                let inner = inner.render(leaf);
+                quote_spanned!(*span=> ::core::option::Option<#inner>)
+            }
+            Shape::Result(span, ok, err) => {
+                let (ok, err) = (ok.render(leaf), err.render(leaf));
+                quote_spanned!(*span=> ::core::result::Result<#ok, #err>)
+            }
+            Shape::Tuple(span, elems) => {
+                let elems = elems.iter().map(|e| e.render(leaf));
+                quote_spanned!(*span=> (#(#elems,)*))
+            }
+            Shape::Array(span, elem, len) => {
+                let elem = elem.render(leaf);
+                quote_spanned!(*span=> [#elem; #len])
+            }
+        }
     }
 }
 
@@ -1170,32 +1261,42 @@ fn as_self_assoc(ty: &Type) -> Option<&Ident> {
     }
 }
 
-/// Returns the single generic argument of `ty` if it is exactly `Pin<T>` for some `T`
-/// mentioning `Self`.
-///
-/// Only the bare name `Pin` is recognized, and it's always rewritten to
-/// `::core::pin::Pin`, so a `Pin` shadowing `core`'s in either the defining or the
-/// implementing crate can't change what the generated code means.
-fn as_pin_self(ty: &Type) -> Option<&Type> {
+/// Returns the type arguments of `ty` if it is exactly `NAME<...>` for the bare name `name`
+/// and every argument is a type. `NAME` alone, with no arguments, yields an empty list.
+fn as_bare_generic<'a>(ty: &'a Type, name: &str) -> Option<Vec<&'a Type>> {
     let Type::Path(tp) = ty else { return None };
     if tp.qself.is_some() || tp.path.leading_colon.is_some() || tp.path.segments.len() != 1 {
         return None;
     }
     let seg = &tp.path.segments[0];
-    if seg.ident != "Pin" {
+    if seg.ident != name {
         return None;
     }
-    let PathArguments::AngleBracketed(args) = &seg.arguments else {
-        return None;
-    };
-    if args.args.len() != 1 {
+    match &seg.arguments {
+        PathArguments::None => Some(vec![]),
+        PathArguments::AngleBracketed(args) => args
+            .args
+            .iter()
+            .map(|a| match a {
+                GenericArgument::Type(t) => Some(t),
+                _ => None,
+            })
+            .collect(),
+        PathArguments::Parenthesized(_) => None,
+    }
+}
+
+/// The last segment of `ty` if it is a path of two or more segments not starting with
+/// `Self`, such as `core::option::Option<T>`.
+fn as_qualified_path(ty: &Type) -> Option<&Ident> {
+    let Type::Path(tp) = ty else { return None };
+    if tp.qself.is_some() || tp.path.segments.len() < 2 {
         return None;
     }
-    let GenericArgument::Type(inner) = &args.args[0] else {
+    if tp.path.segments[0].ident == "Self" {
         return None;
-    };
-    find_self(inner.to_token_stream())?;
-    Some(inner)
+    }
+    tp.path.segments.last().map(|s| &s.ident)
 }
 
 /// Returns the span of the first `Self` token anywhere in the stream, if any.
@@ -1214,6 +1315,12 @@ fn find_self(ts: TokenStream) -> Option<Span> {
     None
 }
 
+const NESTED_HELP: &str = "`Self::Name` may only be used by value, as `&Self::Name`, `&mut Self::Name`, `Pin<&Self::Name>` or `Pin<&mut Self::Name>`, or nested by value inside `Option`, `Result`, tuples and arrays: other uses cannot be bridged across the extern symbol";
+const BORROW_HELP: &str = "only `Self::Name` itself may be borrowed: references to `Option`s, `Result`s, tuples, arrays or slices containing opaque associated types are not supported; pass them by value instead";
+const LIFETIME_HELP: &str =
+    "explicit lifetimes on references to opaque associated types are not supported";
+const PIN_HELP: &str = "`Pin` may only be used with an opaque associated type as `Pin<&Self::Name>` or `Pin<&mut Self::Name>`";
+
 impl UnitraitInput {
     fn lookup(&self, assoc: &Ident) -> syn::Result<usize> {
         self.opaques
@@ -1227,127 +1334,300 @@ impl UnitraitInput {
             })
     }
 
-    fn classify(&self, ty: &Type) -> syn::Result<Slot> {
+    /// Classifies one parameter or return type.
+    fn classify(&self, ty: &Type) -> syn::Result<Shape> {
+        // Whatever it's spelled like, a type without `Self` is passed through verbatim, so
+        // `Option`, `Result` and `Pin` mean whatever they mean in scope there.
+        let Some(self_span) = find_self(ty.to_token_stream()) else {
+            return Ok(Shape::Plain(ty.clone()));
+        };
+        let leaf = |assoc: &Ident, mode: Mode| {
+            Ok(Shape::Opaque {
+                index: self.lookup(assoc)?,
+                mode,
+                span: ty.span(),
+            })
+        };
         if let Some(assoc) = as_self_assoc(ty) {
-            return Ok(Slot::Value(self.lookup(assoc)?));
+            return leaf(assoc, Mode::Value);
         }
-        if let Type::Reference(r) = ty
-            && let Some(assoc) = as_self_assoc(&r.elem)
-        {
-            if let Some(lt) = &r.lifetime {
-                return Err(syn::Error::new(
-                    lt.span(),
-                    "explicit lifetimes on references to opaque associated types are not supported",
-                ));
+        match ty {
+            Type::Paren(p) => self.classify(&p.elem),
+            Type::Group(g) => self.classify(&g.elem),
+            Type::Reference(r) => {
+                let Some(assoc) = as_self_assoc(&r.elem) else {
+                    // A composite that could be passed by value gets the pointed advice;
+                    // anything else the general one.
+                    let composite = match &*r.elem {
+                        Type::Tuple(_) | Type::Array(_) | Type::Slice(_) | Type::Paren(_) => true,
+                        elem => {
+                            as_bare_generic(elem, "Option").is_some()
+                                || as_bare_generic(elem, "Result").is_some()
+                        }
+                    };
+                    return Err(if composite {
+                        syn::Error::new(ty.span(), BORROW_HELP)
+                    } else {
+                        syn::Error::new(self_span, NESTED_HELP)
+                    });
+                };
+                if let Some(lt) = &r.lifetime {
+                    return Err(syn::Error::new(lt.span(), LIFETIME_HELP));
+                }
+                let mode = if r.mutability.is_some() {
+                    Mode::RefMut
+                } else {
+                    Mode::Ref
+                };
+                leaf(assoc, mode)
             }
-            let i = self.lookup(assoc)?;
-            return Ok(if r.mutability.is_some() {
-                Slot::RefMut(i)
-            } else {
-                Slot::Ref(i)
-            });
-        }
-        if let Some(inner) = as_pin_self(ty) {
-            let Type::Reference(r) = inner else {
-                return Err(syn::Error::new(
-                    inner.span(),
-                    "`Pin` may only be used with an opaque associated type as `Pin<&Self::Name>` or `Pin<&mut Self::Name>`",
-                ));
-            };
-            if let Some(lt) = &r.lifetime {
-                return Err(syn::Error::new(
-                    lt.span(),
-                    "explicit lifetimes on references to opaque associated types are not supported",
-                ));
+            Type::Tuple(t) => {
+                let elems = t
+                    .elems
+                    .iter()
+                    .map(|e| self.classify(e))
+                    .collect::<syn::Result<_>>()?;
+                Ok(Shape::Tuple(ty.span(), elems))
             }
-            let Some(assoc) = as_self_assoc(&r.elem) else {
-                return Err(syn::Error::new(
-                    r.elem.span(),
-                    "`Pin` may only be used with an opaque associated type as `Pin<&Self::Name>` or `Pin<&mut Self::Name>`",
-                ));
-            };
-            let i = self.lookup(assoc)?;
-            return Ok(if r.mutability.is_some() {
-                Slot::PinRefMut(i)
-            } else {
-                Slot::PinRef(i)
-            });
+            Type::Array(a) => {
+                let elem = self.classify(&a.elem)?;
+                Ok(Shape::Array(ty.span(), Box::new(elem), a.len.clone()))
+            }
+            Type::Path(_) => {
+                if let Some(args) = as_bare_generic(ty, "Pin") {
+                    let [inner] = args[..] else {
+                        return Err(syn::Error::new(ty.span(), PIN_HELP));
+                    };
+                    let Type::Reference(r) = inner else {
+                        return Err(syn::Error::new(inner.span(), PIN_HELP));
+                    };
+                    if let Some(lt) = &r.lifetime {
+                        return Err(syn::Error::new(lt.span(), LIFETIME_HELP));
+                    }
+                    let Some(assoc) = as_self_assoc(&r.elem) else {
+                        return Err(syn::Error::new(r.elem.span(), PIN_HELP));
+                    };
+                    let mode = if r.mutability.is_some() {
+                        Mode::PinRefMut
+                    } else {
+                        Mode::PinRef
+                    };
+                    return leaf(assoc, mode);
+                }
+                if let Some(args) = as_bare_generic(ty, "Option") {
+                    let [inner] = args[..] else {
+                        return Err(syn::Error::new(
+                            ty.span(),
+                            "`Option` takes exactly one type argument: around an opaque associated type it always means `core::option::Option`",
+                        ));
+                    };
+                    let inner = self.classify(inner)?;
+                    return Ok(Shape::Option(ty.span(), Box::new(inner)));
+                }
+                if let Some(args) = as_bare_generic(ty, "Result") {
+                    let [ok, err] = args[..] else {
+                        return Err(syn::Error::new(
+                            ty.span(),
+                            "`Result` must be written with both of its type arguments: around an opaque associated type it always means `core::result::Result`",
+                        ));
+                    };
+                    let (ok, err) = (self.classify(ok)?, self.classify(err)?);
+                    return Ok(Shape::Result(ty.span(), Box::new(ok), Box::new(err)));
+                }
+                if let Some(last) = as_qualified_path(ty)
+                    && let Some(module) = match last.to_string().as_str() {
+                        "Option" => Some("option"),
+                        "Result" => Some("result"),
+                        "Pin" => Some("pin"),
+                        _ => None,
+                    }
+                {
+                    return Err(syn::Error::new(
+                        ty.span(),
+                        format!(
+                            "write `{last}` by its bare name: around an opaque associated type it always means `core::{module}::{last}`"
+                        ),
+                    ));
+                }
+                Err(syn::Error::new(self_span, NESTED_HELP))
+            }
+            _ => Err(syn::Error::new(self_span, NESTED_HELP)),
         }
-        if let Some(span) = find_self(ty.to_token_stream()) {
-            return Err(syn::Error::new(
-                span,
-                "`Self` may only appear as `Self::Name`, `&Self::Name`, `&mut Self::Name`, `Pin<&Self::Name>` or `Pin<&mut Self::Name>` at the top level of a parameter or return type: nested uses cannot be bridged across the extern symbol",
-            ));
-        }
-        Ok(Slot::Plain)
     }
 
-    /// The type to use for a slot in the trait declaration, with `Self::Name` kept as
-    /// written and `Pin` rewritten to its absolute path.
-    fn trait_ty(&self, ty: &Type, slot: &Slot) -> TokenStream {
-        match slot {
-            Slot::PinRef(i) => {
-                let assoc = &self.opaques[*i].assoc;
-                quote!(::core::pin::Pin<&Self::#assoc>)
-            }
-            Slot::PinRefMut(i) => {
-                let assoc = &self.opaques[*i].assoc;
-                quote!(::core::pin::Pin<&mut Self::#assoc>)
-            }
-            _ => ty.to_token_stream(),
-        }
+    /// The type to use for a slot in the trait declaration: `Self::Name` kept as written,
+    /// `Option`, `Result` and `Pin` rewritten to their absolute paths.
+    fn trait_ty(&self, shape: &Shape) -> TokenStream {
+        shape.render(&|i, span| {
+            let assoc = Ident::new(&self.opaques[i].assoc.to_string(), span);
+            quote_spanned!(span=> Self::#assoc)
+        })
     }
 
     /// The type to use for a slot in the dispatch methods and extern declarations
     /// (defining-crate side: opaque structs by bare name).
-    fn caller_ty(&self, ty: &Type, slot: &Slot) -> TokenStream {
-        match slot {
-            Slot::Plain => ty.to_token_stream(),
-            Slot::Value(i) => self.opaques[*i].opaque.to_token_stream(),
-            Slot::Ref(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(&#op)
-            }
-            Slot::RefMut(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(&mut #op)
-            }
-            Slot::PinRef(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(::core::pin::Pin<&#op>)
-            }
-            Slot::PinRefMut(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(::core::pin::Pin<&mut #op>)
-            }
-        }
+    fn caller_ty(&self, shape: &Shape) -> TokenStream {
+        shape.render(&|i, span| {
+            Ident::new(&self.opaques[i].opaque.to_string(), span).to_token_stream()
+        })
     }
 
     /// Same as `caller_ty`, but naming the opaque structs through the user-supplied path
     /// (implementation-macro side).
-    fn impl_ty(&self, ty: &Type, slot: &Slot) -> TokenStream {
+    fn impl_ty(&self, shape: &Shape) -> TokenStream {
         let path = &self.path;
-        match slot {
-            Slot::Plain => ty.to_token_stream(),
-            Slot::Value(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(#path::#op)
+        shape.render(&|i, span| {
+            let op = Ident::new(&self.opaques[i].opaque.to_string(), span);
+            quote_spanned!(span=> #path::#op)
+        })
+    }
+}
+
+/// Which way a [`Bridge`] conversion goes.
+#[derive(Clone, Copy)]
+enum Dir {
+    /// Opaque struct to the implementation's associated type: parameters.
+    Unwrap,
+    /// The implementation's associated type to opaque struct: return values.
+    Wrap,
+}
+
+/// Generates the implementation-side shims' conversions between opaque structs and the
+/// implementation's associated types, following a [`Shape`] structurally: leaves are cast
+/// (by value, through the bytes; borrowed, through the pointer), and `Option`, `Result`,
+/// tuples and arrays are taken apart and rebuilt around the converted leaves.
+struct Bridge<'a> {
+    input: &'a UnitraitInput,
+    /// The implementor's type, through which the real associated types are reached.
+    timpl: TokenStream,
+    trait_qpath: TokenStream,
+}
+
+impl Bridge<'_> {
+    /// The implementation's associated type at index `i`.
+    fn real(&self, i: usize) -> TokenStream {
+        let (timpl, trait_qpath) = (&self.timpl, &self.trait_qpath);
+        let assoc = &self.input.opaques[i].assoc;
+        quote!(<#timpl as #trait_qpath>::#assoc)
+    }
+
+    /// The opaque struct at index `i`, through the user-supplied path.
+    fn qopaque(&self, i: usize) -> TokenStream {
+        let path = &self.input.path;
+        let op = &self.input.opaques[i].opaque;
+        quote!(#path::#op)
+    }
+
+    /// An expression converting `expr`, of the shape's opaque-side type when unwrapping or
+    /// its real type when wrapping, to the other.
+    fn convert(&self, shape: &Shape, expr: TokenStream, dir: Dir) -> TokenStream {
+        match shape {
+            Shape::Plain(_) => expr,
+            Shape::Opaque { index, mode, .. } => self.convert_leaf(*index, *mode, expr, dir),
+            Shape::Option(_, inner) => {
+                let inner = self.convert(inner, quote!(__unitrait_v), dir);
+                quote! {
+                    match #expr {
+                        ::core::option::Option::Some(__unitrait_v) => ::core::option::Option::Some(#inner),
+                        ::core::option::Option::None => ::core::option::Option::None,
+                    }
+                }
             }
-            Slot::Ref(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(&#path::#op)
+            Shape::Result(_, ok, err) => {
+                let ok = self.convert(ok, quote!(__unitrait_v), dir);
+                let err = self.convert(err, quote!(__unitrait_v), dir);
+                quote! {
+                    match #expr {
+                        ::core::result::Result::Ok(__unitrait_v) => ::core::result::Result::Ok(#ok),
+                        ::core::result::Result::Err(__unitrait_v) => ::core::result::Result::Err(#err),
+                    }
+                }
             }
-            Slot::RefMut(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(&mut #path::#op)
+            Shape::Tuple(_, elems) => {
+                let names: Vec<Ident> = (0..elems.len())
+                    .map(|i| format_ident!("__unitrait_t{i}"))
+                    .collect();
+                let convs = elems
+                    .iter()
+                    .zip(&names)
+                    .map(|(e, n)| self.convert(e, n.to_token_stream(), dir));
+                quote! {{
+                    let (#(#names,)*) = #expr;
+                    (#(#convs,)*)
+                }}
             }
-            Slot::PinRef(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(::core::pin::Pin<&#path::#op>)
+            Shape::Array(_, elem, len) => {
+                // Spelled out so that a `map` method from some trait in scope can't be
+                // picked instead of the inherent one.
+                let source = match dir {
+                    Dir::Unwrap => self.input.impl_ty(elem),
+                    Dir::Wrap => elem.render(&|i, _| self.real(i)),
+                };
+                let conv = self.convert(elem, quote!(__unitrait_v), dir);
+                quote!(<[#source; #len]>::map(#expr, |__unitrait_v| #conv))
             }
-            Slot::PinRefMut(i) => {
-                let op = &self.opaques[*i].opaque;
-                quote!(::core::pin::Pin<&mut #path::#op>)
+        }
+    }
+
+    fn convert_leaf(&self, index: usize, mode: Mode, expr: TokenStream, dir: Dir) -> TokenStream {
+        let (real, qopaque) = (self.real(index), self.qopaque(index));
+        match (dir, mode) {
+            // SAFETY (all five unwraps): opaque values always hold an initialized value of
+            // the implementation's associated type (they can only be obtained from methods
+            // returning one), and size and alignment are checked at compile time. The
+            // by-value case takes ownership, so the opaque's own Drop must not run:
+            // ManuallyDrop suppresses it and the value is moved out by reading it as the
+            // real type.
+            (Dir::Unwrap, Mode::Value) => quote! {{
+                let __unitrait_v = ::core::mem::ManuallyDrop::new(#expr);
+                unsafe {
+                    (&__unitrait_v as *const ::core::mem::ManuallyDrop<#qopaque> as *const #real).read()
+                }
+            }},
+            (Dir::Unwrap, Mode::Ref) => quote! {{
+                let __unitrait_v: &#qopaque = #expr;
+                unsafe { &*(__unitrait_v as *const #qopaque as *const #real) }
+            }},
+            (Dir::Unwrap, Mode::RefMut) => quote! {{
+                let __unitrait_v: &mut #qopaque = #expr;
+                unsafe { &mut *(__unitrait_v as *mut #qopaque as *mut #real) }
+            }},
+            // SAFETY (both pinned unwraps): as above, plus the implementation's value lives
+            // at the very address the caller pinned, and the opaque struct is `Unpin` only
+            // if the associated type is, so the caller could only have built this `Pin` by
+            // pinning the opaque value (or with `new_unchecked`, upholding the same
+            // contract). Re-pinning the value in place therefore keeps the pinning
+            // guarantee the caller already granted.
+            (Dir::Unwrap, Mode::PinRef) => quote! {{
+                let __unitrait_v: ::core::pin::Pin<&#qopaque> = #expr;
+                unsafe {
+                    let __unitrait_v: &#qopaque = ::core::pin::Pin::get_ref(__unitrait_v);
+                    ::core::pin::Pin::new_unchecked(&*(__unitrait_v as *const #qopaque as *const #real))
+                }
+            }},
+            (Dir::Unwrap, Mode::PinRefMut) => quote! {{
+                let __unitrait_v: ::core::pin::Pin<&mut #qopaque> = #expr;
+                unsafe {
+                    let __unitrait_v: &mut #qopaque = ::core::pin::Pin::get_unchecked_mut(__unitrait_v);
+                    ::core::pin::Pin::new_unchecked(&mut *(__unitrait_v as *mut #qopaque as *mut #real))
+                }
+            }},
+            // SAFETY: size and alignment are checked at compile time, so the write stays in
+            // bounds and is aligned; the opaque struct's only field is uninit-tolerant
+            // bytes, so `assume_init` is fine.
+            (Dir::Wrap, Mode::Value) => quote! {{
+                let __unitrait_v: #real = #expr;
+                let mut __unitrait_out = ::core::mem::MaybeUninit::<#qopaque>::uninit();
+                unsafe {
+                    (__unitrait_out.as_mut_ptr() as *mut #real).write(__unitrait_v);
+                    __unitrait_out.assume_init()
+                }
+            }},
+            // A reference to the implementation's value can't be read as one to the (in
+            // general larger) opaque struct. `Shape::find_borrow` rejects these in return
+            // position before any code is generated.
+            (Dir::Wrap, Mode::Ref | Mode::RefMut | Mode::PinRef | Mode::PinRefMut) => {
+                unreachable!("borrowed opaque types are rejected in return position")
             }
         }
     }
@@ -1550,14 +1830,14 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             let params = args
                 .iter()
                 .map(|(id, ty)| {
-                    let tty = input.trait_ty(ty, &input.classify(ty)?);
+                    let tty = input.trait_ty(&input.classify(ty)?);
                     Ok(quote!(#id: #tty))
                 })
                 .collect::<syn::Result<Vec<_>>>()?;
             let ret_ty = match ret {
                 None => quote!(),
                 Some(ty) => {
-                    let tty = input.trait_ty(ty, &input.classify(ty)?);
+                    let tty = input.trait_ty(&input.classify(ty)?);
                     quote!(-> #tty)
                 }
             };
@@ -1577,18 +1857,18 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             let params = args
                 .iter()
                 .map(|(id, ty)| {
-                    let cty = input.caller_ty(ty, &input.classify(ty)?);
+                    let cty = input.caller_ty(&input.classify(ty)?);
                     Ok(quote!(#id: #cty))
                 })
                 .collect::<syn::Result<Vec<_>>>()?;
             let ret_ty = match ret {
                 None => quote!(),
                 Some(ty) => {
-                    let slot = input.classify(ty)?;
-                    if slot.is_borrow() {
-                        return Err(syn::Error::new(ty.span(), "references to opaque associated types are not supported in return position"));
+                    let shape = input.classify(ty)?;
+                    if let Some(span) = shape.find_borrow() {
+                        return Err(syn::Error::new(span, "references to opaque associated types are not supported in return position"));
                     }
-                    let cty = input.caller_ty(ty, &slot);
+                    let cty = input.caller_ty(&shape);
                     quote!(-> #cty)
                 }
             };
@@ -1632,14 +1912,14 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             let params = args
                 .iter()
                 .map(|(id, ty)| {
-                    let cty = input.caller_ty(ty, &input.classify(ty)?);
+                    let cty = input.caller_ty(&input.classify(ty)?);
                     Ok(quote!(#id: #cty))
                 })
                 .collect::<syn::Result<Vec<_>>>()?;
             let ret_ty = match ret {
                 None => quote!(),
                 Some(ty) => {
-                    let cty = input.caller_ty(ty, &input.classify(ty)?);
+                    let cty = input.caller_ty(&input.classify(ty)?);
                     quote!(-> #cty)
                 }
             };
@@ -1758,6 +2038,11 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         }
     }
 
+    let bridge = Bridge {
+        input,
+        timpl: timpl.clone(),
+        trait_qpath: trait_qpath.clone(),
+    };
     for m in methods {
         let Method {
             unsafety,
@@ -1767,82 +2052,28 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
             ret,
             ..
         } = m;
-        let slots = args
+        let shapes = args
             .iter()
             .map(|(_, ty)| input.classify(ty))
             .collect::<syn::Result<Vec<_>>>()?;
         let params = args
             .iter()
-            .zip(&slots)
-            .map(|((id, ty), slot)| {
-                let ity = input.impl_ty(ty, slot);
+            .zip(&shapes)
+            .map(|((id, _), shape)| {
+                let ity = input.impl_ty(shape);
                 quote!(#id: #ity)
             })
             .collect::<Vec<_>>();
-        // Convert opaque parameters to the implementation's associated type.
-        let convs = args.iter().zip(&slots).filter_map(|((id, _), slot)| {
-            let real = |i: &usize| {
-                let assoc = &input.opaques[*i].assoc;
-                quote!(<#timpl as #trait_qpath>::#assoc)
-            };
-            let qopaque = |i: &usize| {
-                let op = &input.opaques[*i].opaque;
-                quote!(#path::#op)
-            };
-            match slot {
-                Slot::Plain => None,
-                // SAFETY (all three): opaque values always hold an initialized value of
-                // the implementation's associated type, and size and alignment are
-                // checked at compile time. The by-value case takes ownership, so the
-                // opaque's own Drop must not run: ManuallyDrop suppresses it and the
-                // value is moved out by reading it as the real type.
-                Slot::Value(i) => {
-                    let (real, qopaque) = (real(i), qopaque(i));
-                    Some(quote! {
-                        let #id = ::core::mem::ManuallyDrop::new(#id);
-                        let #id: #real = unsafe {
-                            (&#id as *const ::core::mem::ManuallyDrop<#qopaque> as *const #real).read()
-                        };
-                    })
-                }
-                Slot::Ref(i) => {
-                    let (real, qopaque) = (real(i), qopaque(i));
-                    Some(quote! {
-                        let #id = unsafe { &*(#id as *const #qopaque as *const #real) };
-                    })
-                }
-                Slot::RefMut(i) => {
-                    let (real, qopaque) = (real(i), qopaque(i));
-                    Some(quote! {
-                        let #id = unsafe { &mut *(#id as *mut #qopaque as *mut #real) };
-                    })
-                }
-                // SAFETY (both): as above, plus the implementation's value lives at the
-                // very address the caller pinned, and the opaque struct is `Unpin` only
-                // if the associated type is, so the caller could only have built this
-                // `Pin` by pinning the opaque value (or with `new_unchecked`, upholding
-                // the same contract). Re-pinning the value in place therefore keeps the
-                // pinning guarantee the caller already granted.
-                Slot::PinRef(i) => {
-                    let (real, qopaque) = (real(i), qopaque(i));
-                    Some(quote! {
-                        let #id = unsafe {
-                            let #id: &#qopaque = ::core::pin::Pin::get_ref(#id);
-                            ::core::pin::Pin::new_unchecked(&*(#id as *const #qopaque as *const #real))
-                        };
-                    })
-                }
-                Slot::PinRefMut(i) => {
-                    let (real, qopaque) = (real(i), qopaque(i));
-                    Some(quote! {
-                        let #id = unsafe {
-                            let #id: &mut #qopaque = ::core::pin::Pin::get_unchecked_mut(#id);
-                            ::core::pin::Pin::new_unchecked(&mut *(#id as *mut #qopaque as *mut #real))
-                        };
-                    })
-                }
-            }
-        });
+        // Convert parameters mentioning opaque types to the implementation's associated
+        // types.
+        let convs = args
+            .iter()
+            .zip(&shapes)
+            .filter(|(_, shape)| !matches!(shape, Shape::Plain(_)))
+            .map(|((id, _), shape)| {
+                let conv = bridge.convert(shape, id.to_token_stream(), Dir::Unwrap);
+                quote!(let #id = #conv;)
+            });
         let argids = args.iter().map(|(id, _)| id).collect::<Vec<_>>();
         let call = quote!(<#timpl as #trait_qpath>::#name(#(#argids),*));
         let call = match unsafety {
@@ -1854,30 +2085,9 @@ fn expand(input: &UnitraitInput) -> syn::Result<TokenStream> {
         let (ret_ty, body) = match ret {
             None => (quote!(), call),
             Some(ty) => {
-                let slot = input.classify(ty)?;
-                let ity = input.impl_ty(ty, &slot);
-                let body = match &slot {
-                    Slot::Value(i) => {
-                        let assoc = &input.opaques[*i].assoc;
-                        let real = quote!(<#timpl as #trait_qpath>::#assoc);
-                        let qopaque = {
-                            let op = &input.opaques[*i].opaque;
-                            quote!(#path::#op)
-                        };
-                        // SAFETY: size and alignment are checked at compile time, so the
-                        // write stays in bounds and is aligned; the opaque struct's only
-                        // field is uninit-tolerant bytes, so `assume_init` is fine.
-                        quote! {
-                            let __unitrait_ret: #real = #call;
-                            let mut __unitrait_out = ::core::mem::MaybeUninit::<#qopaque>::uninit();
-                            unsafe {
-                                (__unitrait_out.as_mut_ptr() as *mut #real).write(__unitrait_ret);
-                                __unitrait_out.assume_init()
-                            }
-                        }
-                    }
-                    _ => call,
-                };
+                let shape = input.classify(ty)?;
+                let ity = input.impl_ty(&shape);
+                let body = bridge.convert(&shape, call, Dir::Wrap);
                 (quote!(-> #ity), body)
             }
         };

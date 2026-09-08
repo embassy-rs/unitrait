@@ -10,13 +10,12 @@ error[E0382]: use of moved value: `ctx`
    |               ^^^ value used here after move
    |
 note: consider changing this parameter type in method `take` to borrow instead if owning the value isn't necessary
-  --> tests/ui/opaque_not_copy.rs:5:18
+  --> tests/ui/opaque_not_copy.rs:11:22
    |
- 5 |         pub type Context: Drop;
-   |                  ^^^^^^^ this parameter takes ownership of the value
-...
 11 |         fn take(ctx: Self::Context);
-   |            ---- in this method
+   |            ----      ^^^^ this parameter takes ownership of the value
+   |            |
+   |            in this method
 note: if `FooContext` implemented `Clone`, you could clone the value
   --> tests/ui/opaque_not_copy.rs:1:1
    |

@@ -1,0 +1,18 @@
+error[E0053]: method `get` has an incompatible type for trait
+  --> tests/ui/impl_nested_wrong_signature.rs:21:23
+   |
+21 |     fn get(v: u32) -> Option<u32> {
+   |                       ^^^^^^^^^^^ expected `(u32, u32)`, found `u32`
+   |
+note: type in trait
+  --> tests/ui/impl_nested_wrong_signature.rs:8:27
+   |
+ 8 |         fn get(v: u32) -> Option<(Self::Context, u32)>;
+   |                           ^^^^^^
+   = note: expected signature `fn(u32) -> Option<(u32, u32)>`
+              found signature `fn(u32) -> Option<u32>`
+help: change the output type to match the trait
+   |
+21 -     fn get(v: u32) -> Option<u32> {
+21 +     fn get(v: u32) -> Option<(u32, u32)> {
+   |

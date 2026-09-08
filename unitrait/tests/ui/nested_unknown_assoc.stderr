@@ -1,0 +1,5 @@
+error: the trait has no opaque associated type named `Nope`
+ --> tests/ui/nested_unknown_assoc.rs:8:34
+  |
+8 |         fn get() -> Option<Self::Nope>;
+  |                                  ^^^^

@@ -38,7 +38,6 @@ fn ui() {
     t.compile_fail("tests/ui/duplicate_assoc_type.rs");
     t.compile_fail("tests/ui/opaque_on_method.rs");
     t.compile_fail("tests/ui/unknown_assoc_type.rs");
-    t.compile_fail("tests/ui/nested_self.rs");
     t.compile_fail("tests/ui/opaque_ref_return.rs");
     t.compile_fail("tests/ui/opaque_ref_lifetime.rs");
     t.compile_fail("tests/ui/bad_path_keyword.rs");
@@ -63,6 +62,24 @@ fn ui() {
     t.compile_fail("tests/ui/copy_with_drop_bound.rs");
     t.compile_fail("tests/ui/copy_with_clone_bound.rs");
 
+    // Errors in opaque associated types nested inside other types.
+    t.compile_fail("tests/ui/nested_unsupported.rs");
+    t.compile_fail("tests/ui/nested_in_user_generic.rs");
+    t.compile_fail("tests/ui/nested_dyn.rs");
+    t.compile_fail("tests/ui/nested_ref_option.rs");
+    t.compile_fail("tests/ui/nested_ref_mut_tuple.rs");
+    t.compile_fail("tests/ui/nested_slice.rs");
+    t.compile_fail("tests/ui/nested_ref_array.rs");
+    t.compile_fail("tests/ui/nested_ref_return.rs");
+    t.compile_fail("tests/ui/nested_pin_return.rs");
+    t.compile_fail("tests/ui/nested_option_arity.rs");
+    t.compile_fail("tests/ui/nested_result_arity.rs");
+    t.compile_fail("tests/ui/nested_qualified_option.rs");
+    t.compile_fail("tests/ui/nested_qualified_pin.rs");
+    t.compile_fail("tests/ui/nested_lifetime.rs");
+    t.compile_fail("tests/ui/nested_unknown_assoc.rs");
+    t.compile_fail("tests/ui/nested_pin_by_value.rs");
+
     // Errors in `Pin` parameters.
     t.compile_fail("tests/ui/pin_by_value.rs");
     t.compile_fail("tests/ui/pin_lifetime.rs");
@@ -74,6 +91,8 @@ fn ui() {
     t.compile_fail("tests/ui/impl_overaligned.rs");
     t.compile_fail("tests/ui/cfg_attr_impl_too_big.rs");
     t.compile_fail("tests/ui/impl_wrong_signature.rs");
+    t.compile_fail("tests/ui/impl_opaque_wrong_signature.rs");
+    t.compile_fail("tests/ui/impl_nested_wrong_signature.rs");
     t.compile_fail("tests/ui/impl_not_a_type.rs");
     t.compile_fail("tests/ui/impl_not_send.rs");
     t.compile_fail("tests/ui/impl_not_copy.rs");

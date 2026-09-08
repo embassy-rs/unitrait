@@ -1,0 +1,18 @@
+error[E0053]: method `get` has an incompatible type for trait
+  --> tests/ui/impl_opaque_wrong_signature.rs:20:17
+   |
+20 |     fn get(ctx: &u64) -> u32 {
+   |                 ^^^^ expected `u32`, found `u64`
+   |
+note: type in trait
+  --> tests/ui/impl_opaque_wrong_signature.rs:7:21
+   |
+ 7 |         fn get(ctx: &Self::Context) -> u32;
+   |                     ^
+   = note: expected signature `fn(&u32) -> u32`
+              found signature `fn(&u64) -> u32`
+help: change the parameter type to match the trait
+   |
+20 -     fn get(ctx: &u64) -> u32 {
+20 +     fn get(ctx: &u32) -> u32 {
+   |

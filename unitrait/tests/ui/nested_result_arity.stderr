@@ -1,0 +1,5 @@
+error: `Result` must be written with both of its type arguments: around an opaque associated type it always means `core::result::Result`
+ --> tests/ui/nested_result_arity.rs:8:22
+  |
+8 |         fn poke(ctx: Result<Self::Context>);
+  |                      ^^^^^^

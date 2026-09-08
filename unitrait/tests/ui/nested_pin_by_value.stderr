@@ -1,0 +1,5 @@
+error: `Pin` may only be used with an opaque associated type as `Pin<&Self::Name>` or `Pin<&mut Self::Name>`
+ --> tests/ui/nested_pin_by_value.rs:8:27
+  |
+8 |         fn poke(ctx: [Pin<Self::Context>; 2]);
+  |                           ^^^^

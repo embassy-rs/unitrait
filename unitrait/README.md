@@ -124,7 +124,9 @@ type), an opaque type with the declared size and alignment, returned by
 type, and the implementation macro checks at compile time that it fits. A trait may declare any number of opaque types, and
 methods may use each as `Self::Name`, `&Self::Name`, `&mut Self::Name`,
 `Pin<&Self::Name>` or `Pin<&mut Self::Name>` in any parameter, and return one
-by value. Opaque values are only obtainable from methods returning one, so they
+by value. These may also be nested by value inside `Option`, `Result`, tuples
+and arrays, as in `Option<Self::Name>` or `Result<(Self::Name, u32), E>`; there,
+`Option`, `Result` and `Pin` always mean the `core` types. Opaque values are only obtainable from methods returning one, so they
 always hold initialized state — the dispatch methods are safe.
 
 An opaque type with a `Drop` bound gets a `Drop` impl, which drops the

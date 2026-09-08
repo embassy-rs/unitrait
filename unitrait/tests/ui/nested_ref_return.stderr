@@ -1,0 +1,5 @@
+error: references to opaque associated types are not supported in return position
+ --> tests/ui/nested_ref_return.rs:8:28
+  |
+8 |         fn get() -> Option<&Self::Context>;
+  |                            ^

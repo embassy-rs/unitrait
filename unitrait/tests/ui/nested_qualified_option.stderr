@@ -1,0 +1,5 @@
+error: write `Option` by its bare name: around an opaque associated type it always means `core::option::Option`
+ --> tests/ui/nested_qualified_option.rs:8:21
+  |
+8 |         fn get() -> core::option::Option<Self::Context>;
+  |                     ^^^^

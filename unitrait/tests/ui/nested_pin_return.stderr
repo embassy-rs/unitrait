@@ -1,0 +1,5 @@
+error: references to opaque associated types are not supported in return position
+ --> tests/ui/nested_pin_return.rs:8:27
+  |
+8 |         fn get() -> (u32, Pin<&mut Self::Context>);
+  |                           ^^^

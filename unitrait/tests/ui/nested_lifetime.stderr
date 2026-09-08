@@ -1,0 +1,5 @@
+error: explicit lifetimes on references to opaque associated types are not supported
+ --> tests/ui/nested_lifetime.rs:8:30
+  |
+8 |         fn poke(ctx: Option<&'static Self::Context>);
+  |                              ^^^^^^^

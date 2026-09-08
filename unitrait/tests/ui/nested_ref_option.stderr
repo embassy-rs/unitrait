@@ -1,0 +1,5 @@
+error: only `Self::Name` itself may be borrowed: references to `Option`s, `Result`s, tuples, arrays or slices containing opaque associated types are not supported; pass them by value instead
+ --> tests/ui/nested_ref_option.rs:8:22
+  |
+8 |         fn poke(ctx: &Option<Self::Context>);
+  |                      ^

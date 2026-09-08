@@ -1,0 +1,5 @@
+error: `Self::Name` may only be used by value, as `&Self::Name`, `&mut Self::Name`, `Pin<&Self::Name>` or `Pin<&mut Self::Name>`, or nested by value inside `Option`, `Result`, tuples and arrays: other uses cannot be bridged across the extern symbol
+ --> tests/ui/nested_in_user_generic.rs:8:37
+  |
+8 |         fn poke(ctx: Option<Wrapper<Self::Context>>);
+  |                                     ^^^^

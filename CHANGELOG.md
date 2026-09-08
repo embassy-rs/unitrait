@@ -22,8 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added opaque associated types: `#[opaque(size = N, align = M)] type Name;` declares a type
   the caller sees as opaque bytes of a fixed maximum size and alignment, while the
   implementation picks the real type.
-  - Methods may take one as `Self::Name`, `&Self::Name`, `&mut Self::Name`, `Pin<&Self::Name>` or `Pin<&mut Self::Name>`.
-  - Methods may return one by value only.
   - The implementation macro checks the size and alignment at compile time.
   - `Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe` and `Copy` may be declared as bounds.
   - A `Drop` bound gives the opaque type drop glue, dropped through its `#[drop_symbol = "..."]`.
